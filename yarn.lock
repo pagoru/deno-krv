@@ -5,6 +5,25 @@ __metadata:
   version: 8
   cacheKey: 10c0
 
+"jsr@npm:^0.13.2":
+  version: 0.13.5
+  resolution: "jsr@npm:0.13.5"
+  dependencies:
+    node-stream-zip: "npm:^1.15.0"
+    semiver: "npm:^1.1.0"
+  bin:
+    jsr: dist/bin.js
+  checksum: 10c0/1be5adf5d98940091ec5ff89cdc3effeaf91ae0bd12d41ee49db8767b2221043ad2022d5f9a3acdd1dedb381ef3e31cb95f8fe874129cc91ec22df63b88ae373
+  languageName: node
+  linkType: hard
+
+"node-stream-zip@npm:^1.15.0":
+  version: 1.16.0
+  resolution: "node-stream-zip@npm:1.16.0"
+  checksum: 10c0/3e201e39b42b46c2e543bd11c71821aa675a98d6cb4901840bd952281696599c9c29c630cd00e8da9bee4b02879fee2d0194a225b359d48a3bf966bdd63d8648
+  languageName: node
+  linkType: hard
+
 "prettier@npm:3.9.6":
   version: 3.9.6
   resolution: "prettier@npm:3.9.6"
@@ -18,6 +37,14 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "root-workspace-0b6124@workspace:."
   dependencies:
+    jsr: "npm:^0.13.2"
     prettier: "npm:3.9.6"
   languageName: unknown
   linkType: soft
+
+"semiver@npm:^1.1.0":
+  version: 1.1.0
+  resolution: "semiver@npm:1.1.0"
+  checksum: 10c0/f208555fcdf8726d25a5d5acd5079b1f6a274a9be291da6981c70867cca9abd43721648b338bac914fbc7874e2594217a5943a2e91410ce24b5a80a641d4468b
+  languageName: node
+  linkType: hard

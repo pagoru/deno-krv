@@ -1,4 +1,4 @@
-# deno-krv
+# Deno KRV
 
 **KRV** stands for **Key · Relation · Value**: [Deno KV](https://docs.deno.com/deploy/kv/)'s
 key-value store, with relations between the values. A typed, schema-validated

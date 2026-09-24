@@ -33,6 +33,7 @@
     ],
     "packageJson": {
       "dependencies": [
+        "npm:jsr@~0.13.2",
         "npm:prettier@3.9.6"
       ]
     }

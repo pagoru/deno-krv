@@ -6,3 +6,4 @@ export type * from "./schema.ts";
 export type * from "./table.ts";
 export type * from "./migration.ts";
 export type * from "./expand.ts";
+export type * from "./database.ts";
