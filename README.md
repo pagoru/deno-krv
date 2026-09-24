@@ -7,11 +7,13 @@ relations consistent.
 
 - Schemas are plain data. Types are inferred from them and every write is
   validated.
-- Relations, indexes, transforms (hash/encrypt), timestamps and migrations.
+- Relations, indexes, timestamps and migrations.
+- Built-in hashing, password hashing (bcrypt) and encryption, keyed with
+  secrets it creates for you.
 - Every write, with its indexes and relations, commits atomically.
 
 ```ts
-import { openKRV } from "./mod.ts";
+import { openKRV } from "@da/deno-krv";
 
 const db = await openKRV({
   path: "./notes.db",
@@ -46,6 +48,7 @@ await db.delete(note.key);
 - [Reading: `where` and `filter`](#reading-where-and-filter)
 - [Migrations](#migrations)
 - [Schema changes](#schema-changes)
+- [Files on disk](#files-on-disk)
 - [API reference](#api-reference)
 - [Errors](#errors)
 - [Guarantees and limits](#guarantees-and-limits)
@@ -53,6 +56,10 @@ await db.delete(note.key);
 ---
 
 ## Setup
+
+```sh
+deno add jsr:@da/deno-krv
+```
 
 Enable Deno KV in `deno.json`:
 
@@ -63,7 +70,10 @@ Enable Deno KV in `deno.json`:
 TypeScript `strict` mode must be on (Deno's default). If you have a
 `tsconfig.json`, set `"strict": true`.
 
-A database file needs `--allow-read` and `--allow-write` for its folder.
+A database file needs `--allow-read` and `--allow-write` for its folder: next
+to it go its secrets, a lock while opening and a backup while migrating (see
+[Files on disk](#files-on-disk)). On Deno Deploy, or anywhere without a
+database file, pass [`secrets`](#transforms) yourself.
 
 ---
 
@@ -101,7 +111,7 @@ objects. In a separate variable, wrap them in `table()` (or add `as const`) so
 their exact types are kept:
 
 ```ts
-import { openKRV, table } from "./mod.ts";
+import { openKRV, table } from "@da/deno-krv";
 
 export const notes = table({
   key: ["notes", "{noteId}"],
@@ -211,19 +221,17 @@ Arguments are numbers, `|text|`, `true`, `false` or `null`. Typos
 
 ## Transforms
 
-A character after a field name stores something else than the plain value,
-using your own functions:
+A character after a field name stores something else than the plain value.
+Three are built in, no setup needed:
+
+| Character | Stores                          | Reads back | Search                                |
+| --------- | ------------------------------- | ---------- | ------------------------------------- |
+| `#`       | HMAC-SHA256 (hex) of the value  | The hash   | `where`, indexes                      |
+| `*`       | bcrypt (cost 10), peppered      | The hash   | No; check with `compare()`            |
+| `&`       | AES-256-GCM of the value (JSON) | The value  | Through an index `using: "#"` (below) |
 
 ```ts
 const db = await openKRV({
-  transforms: {
-    "*": {
-      save: (v) => bcrypt.hash(v),
-      compare: (p, s) => bcrypt.compare(p, s),
-    },
-    "#": { save: (v) => sha256(v), deterministic: true },
-    "&": { save: (v) => encrypt(v), load: (v) => decrypt(v) },
-  },
   tables: [
     {
       key: ["members", "{memberId}"],
@@ -252,6 +260,50 @@ await db.list(["members"], { where: { nickname: "ana" } }); // hashed, then comp
 await db.list(["members"], { where: { phone: "+34600000000" } }); // via byPhone
 ```
 
+All three use a secret, so stored values can't be read or guessed from the
+database alone (a plain hash of a phone number or a short nickname can be
+brute-forced). `#` and `&` derive separate keys (HKDF) from the same `key`
+secret. The password is peppered with HMAC-SHA256 before bcrypt, so passwords
+of any length work (bcrypt alone only reads 72 bytes). Non-string values are
+hashed as JSON; `&` keeps their type (a number reads back as a number).
+
+The secrets live next to the database, in `<path>.secrets`: a binary file
+(the `KRVS` header, a version byte, then the 32-byte key and 32-byte pepper),
+created on first open with owner-only permissions. Being binary only keeps it
+from reading as text: anyone who can read the file has the secrets, so protect
+it like the database itself.
+
+**Back it up and keep it out of git**: without it, `#` fields can't be
+searched, `*` passwords can't be checked and `&` fields can't be decrypted.
+With `":memory:"` they're random for each open. Without a file (Deno's default
+location, a remote database), pass them yourself, e.g. from environment
+variables:
+
+```ts
+const db = await openKRV({
+  secrets: {
+    key: Deno.env.get("KRV_KEY")!,
+    pepper: Deno.env.get("KRV_PEPPER")!,
+  },
+  tables,
+});
+```
+
+Passed secrets are used as is and never written. The file is only created
+while at least one built-in transform isn't replaced.
+
+Declare your own transforms under `transforms`, with any character that can't
+be part of a field name. Declaring `#`, `*` or `&` replaces the built-in one:
+
+```ts
+const db = await openKRV({
+  transforms: {
+    "~": { save: (v) => compress(v), load: (v) => decompress(v) },
+  },
+  tables,
+});
+```
+
 | Function                 | Meaning                                       |
 | ------------------------ | --------------------------------------------- |
 | `save`                   | What gets stored (required)                   |
@@ -267,8 +319,8 @@ time, so it can't be compared as stored. Give it an index `using` a
 deterministic transform: the index is keyed by the hash of the plain value, and
 `where: { phone }` hashes the searched value the same way. The row only holds
 the encrypted phone. Without such an index, searching it is a compile error.
-Use a keyed hash (e.g. HMAC with a secret) for this, since a plain hash of a
-phone number can be guessed.
+The built-in `#` is keyed (HMAC), so the hash of a phone number can't be
+guessed without the key.
 
 ---
 
@@ -298,7 +350,9 @@ indexed, so an optional unique field can be missing on many rows.
 
 `using` indexes a field through a deterministic transform, for fields stored
 encrypted: `using: "#"` for all fields, or `using: { phone: "#" }` for some
-(see [Transforms](#transforms)).
+(see [Transforms](#transforms)). A field already stored with `#` is indexed as
+stored, so `using: "#"` on it changes nothing. A field stored with a transform
+that can't be read back (like `*`) can't be indexed through another one.
 
 ---
 
@@ -465,12 +519,37 @@ it, and `limit` counts what's left.
 
 ## Migrations
 
+Each migration is a file named `YYYY-MM-DD--NNN[--name].ts`: the date, a
+three-digit number for the order within that day, and an optional name.
+Create one with:
+
+```sh
+deno run -RW jsr:@da/deno-krv/cli new-migration "todo priority"
+# Created migrations/2026-10-01--001--todo-priority.ts
+```
+
+Or as a task in your `deno.json`, then `deno task new-migration "todo priority"`:
+
+```json
+{
+  "tasks": {
+    "new-migration": "deno run -RW jsr:@da/deno-krv/cli new-migration"
+  }
+}
+```
+
+`--dir=<path>` changes the folder (default `migrations`). The number is the
+next one for today among the files there; `--number=N` sets it without reading
+the folder (then only `-W` is needed). The same is available in code:
+`newMigration(name?, dir?, number?)` from `@da/deno-krv/cli`, and
+`nextMigrationName` / `parseMigrationName` from `@da/deno-krv`.
+
 ```ts
-// migrations/2026-10-01--todo-priority.ts
-import type { KrvMigration } from "./mod.ts";
+// migrations/2026-10-01--001--todo-priority.ts
+import type { KrvMigration } from "@da/deno-krv";
 
 export default {
-  id: "2026-10-01--todo-priority",
+  url: import.meta.url, // the file name identifies the migration
   up: async (db) => {
     const todos = db.raw.list<Record<string, unknown>>({ prefix: ["todos"] });
     for await (const { key, value } of todos) {
@@ -484,24 +563,83 @@ export default {
 const db = await openKRV({
   path: "./todos.db",
   tables: [todos], // a table({ key: ["todos", "{todoId}"], … })
-  migrations: [import("./migrations/2026-10-01--todo-priority.ts")],
+  migrations: [import("./migrations/2026-10-01--001--todo-priority.ts")],
   events: {
     beforeMigrations: async ({ backupPath }) => await upload(backupPath),
   },
 });
 ```
 
-- `await openKRV` runs pending migrations first, by `id` order, once each.
-  `enabled: false` skips one.
+- `await openKRV` runs pending migrations first, once each, by date and then
+  number (not in the order they're listed). `enabled: false` skips one.
+- The name comes from `url: import.meta.url`; `openKRV` never reads the
+  folder. Only the name is stored, never the path, so moving the project
+  changes nothing.
+- A migration is recorded as applied by its date and number
+  (`2026-10-01--001`): renaming the name part doesn't run it again. Two files
+  with the same date and number are rejected.
 - Inside `up`: the usual API, plus `db.raw` (plain `Deno.Kv`, no validation)
   and `db.transforms["&"].save(x)` to transform values by hand for `db.raw`.
+  Rows are loosely typed unless you give the migration your database's type
+  (see [Typed migrations](#typed-migrations)).
 - The file is backed up to `<path>.backup` first. If anything fails, it's
   restored and `openKRV` throws. A crash mid-migration is restored on the next
   open.
 - `<path>.lock` makes other processes wait while one migrates.
 - Events: `beforeMigrations`, `beforeMigration`, `afterMigration`,
   `migrationFailed`, `afterMigrations`. Each is awaited; a throw fails the run.
+  Their migrations carry `id` (`2026-10-01--001`), `fileName`
+  (`2026-10-01--001--todo-priority`) and `name` (`todo-priority`, if any).
+- Applied migrations are stored under `["__krv", "migrations", id]` with
+  `id`, `fileName`, `description`, `appliedAt` and `durationMs`.
 - With `:memory:` there's no backup: errors are just thrown.
+
+### Typed migrations
+
+`KrvMigration<Db>` types `db` inside `up` with your tables. The type can't
+come from `openKRV`'s result, since `openKRV` imports the migrations (that
+loop makes everything `any`), so declare the schema apart with `defineKRV` and
+spread it into `openKRV`:
+
+```ts
+// db/config.ts
+import { defineKRV, type KrvDatabaseOf } from "@da/deno-krv";
+
+export const config = defineKRV({
+  validators: { email: ["string", (v) => v.includes("@")] },
+  tables: [users, posts],
+});
+export type Db = KrvDatabaseOf<typeof config>;
+```
+
+```ts
+// db/migrations/2026-10-01--001--seed.ts
+import type { KrvMigration } from "@da/deno-krv";
+import type { Db } from "../config.ts";
+
+export default {
+  url: import.meta.url,
+  up: async (db) => {
+    await db.insert(["users"], { name: "ana" }); // typed and checked
+  },
+} satisfies KrvMigration<Db>;
+```
+
+```ts
+// db/main.ts
+import { openKRV } from "@da/deno-krv";
+import { config } from "./config.ts";
+
+export const db = await openKRV({
+  ...config,
+  path: "./app.db",
+  migrations: [import("./migrations/2026-10-01--001--seed.ts")],
+});
+```
+
+`defineKRV` takes `tables`, `validators` and `transforms`, typed and checked
+as in `openKRV`. A migration written for an old shape of the data is better
+left untyped, with `db.raw`.
 
 ---
 
@@ -519,21 +657,67 @@ Table "todos": 3 invalid row(s)
 
 ---
 
+## Files on disk
+
+With `path: "./app.db"`:
+
+| File                              | What                                      | When                                 |
+| --------------------------------- | ----------------------------------------- | ------------------------------------ |
+| `app.db`                          | The data (Deno KV, SQLite)                | Always                               |
+| `app.db.secrets`                  | Key and pepper of the built-in transforms | Created on first open; keep it       |
+| `app.db-wal`, `app.db-shm`        | SQLite's journal                          | While open; removed on `close()`     |
+| `app.db.lock`                     | Only one process opens or migrates        | While `openKRV` runs                 |
+| `app.db.backup` (+ `-wal`/`-shm`) | Copy taken before migrating               | While migrating; restored on failure |
+
+Keep `app.db` and `app.db.secrets` together, backed up, and out of git:
+
+```gitignore
+*.db*
+```
+
+`":memory:"` writes nothing. Without a `path` (Deno's default location) Deno
+manages the data and no file is written, so pass `secrets`.
+
+---
+
 ## API reference
 
-| Method                                                              | Description                                                                                            |
-| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `openKRV({ path, tables, … })`                                      | Opens, migrates and checks. Options: `validators`, `transforms`, `migrations`, `events`, `lockTimeout` |
-| `table({ key, schema, … })`                                         | Optional: keeps a table's types when defined outside `openKRV`. Options: `indexes`, `timestamps`       |
-| `get(key, { expand? })`                                             | One row, or `value: null`                                                                              |
-| `insert(literals, value)`                                           | New row; returns `{ key, value }`                                                                      |
-| `update(key, patch \| (row) => patch, { check? })`                  | Partial update, merged atomically; returns the row                                                     |
-| `set(key, value, { check? })`                                       | Create or replace; `check` a versionstamp for optimistic concurrency                                   |
-| `delete(key, { cascade? })`                                         | Delete; `cascade` deletes referencing rows                                                             |
-| `list(literals, { where, filter, limit, reverse, values, expand })` | Rows: await for an array or `for await` to stream; `values: false` for entries                         |
-| `find(literals, { where, filter, reverse, values, expand })`        | First matching row, or `null`                                                                          |
-| `compare(key, field, plain)`                                        | Check a plain value against a transformed field                                                        |
-| `close()`                                                           | Close the database                                                                                     |
+| Method                                                              | Description                                                                                                       |
+| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `openKRV({ path, tables, … })`                                      | Opens, migrates and checks. Options: `validators`, `transforms`, `migrations`, `events`, `secrets`, `lockTimeout` |
+| `table({ key, schema, … })`                                         | Optional: keeps a table's types when defined outside `openKRV`. Options: `indexes`, `timestamps`                  |
+| `get(key, { expand? })`                                             | One row, or `value: null`                                                                                         |
+| `insert(literals, value)`                                           | New row; returns `{ key, value }`                                                                                 |
+| `update(key, patch \| (row) => patch, { check? })`                  | Partial update, merged atomically; returns the row                                                                |
+| `set(key, value, { check? })`                                       | Create or replace; `check` a versionstamp for optimistic concurrency                                              |
+| `delete(key, { cascade? })`                                         | Delete; `cascade` deletes referencing rows                                                                        |
+| `list(literals, { where, filter, limit, reverse, values, expand })` | Rows: await for an array or `for await` to stream; `values: false` for entries                                    |
+| `find(literals, { where, filter, reverse, values, expand })`        | First matching row, or `null`                                                                                     |
+| `compare(key, field, plain)`                                        | Check a plain value against a transformed field                                                                   |
+| `close()`                                                           | Close the database                                                                                                |
+
+Also exported:
+
+| Export                                              | What                                                                                                                |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `defineKRV({ tables, validators?, transforms? })`   | The schema part of `openKRV`'s options, declared apart; spread it into `openKRV`                                    |
+| `KrvDatabaseOf<typeof config>`                      | The database type of a `defineKRV` config                                                                           |
+| `nextMigrationName(existing, name?, now?, number?)` | The next `YYYY-MM-DD--NNN[--name]` for today after `existing` file names                                            |
+| `parseMigrationName(fileName)`                      | `{ id, date, number, name? }`, or `null` if it isn't a migration name                                               |
+| `newMigration(name?, dir?, number?)`                | From `@da/deno-krv/cli`: writes a new migration file, returns its path                                              |
+| `KrvDatabase<Tables, Env>`                          | The type of an open database                                                                                        |
+| `KrvMigration<Db?>`, `KrvLoadedMigration`           | A migration as written (`url`, `up`, …; `db` typed as `Db` if given), and as loaded (plus `id`, `fileName`, `name`) |
+| `KrvSecrets`                                        | `{ key, pepper }` for the `secrets` option                                                                          |
+| `KrvDefaultTransforms`                              | The types of the built-in `#`, `*` and `&`                                                                          |
+
+To name the database type in your code, use `defineKRV` (see
+[Typed migrations](#typed-migrations)), or take it from the open call when
+nothing it imports needs the type:
+
+```ts
+export const open = () => openKRV({ path: "./app.db", tables });
+export type Db = Awaited<ReturnType<typeof open>>;
+```
 
 ```ts
 const note = await db.get(["notes", id]);
@@ -550,13 +734,14 @@ await db.set(
 
 ## Errors
 
-| Error                | When                                                   |
-| -------------------- | ------------------------------------------------------ |
-| `KrvSchemaError`     | Invalid setup, stale rows or broken indexes (at open)  |
-| `KrvValidationError` | A value doesn't match the schema; `.issues` lists them |
-| `KrvConflictError`   | A `check` failed, a key or unique value is taken       |
-| `KrvReferenceError`  | A missing reference, or a delete without `cascade`     |
-| `KrvNotFoundError`   | `update` on a row that doesn't exist                   |
+| Error                | When                                                                                                                            |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `KrvSchemaError`     | Invalid setup, stale rows or broken indexes (at open)                                                                           |
+| `KrvValidationError` | A value doesn't match the schema; `.issues` lists them                                                                          |
+| `KrvConflictError`   | A `check` failed, a key or unique value is taken                                                                                |
+| `KrvReferenceError`  | A missing reference, or a delete without `cascade`                                                                              |
+| `KrvNotFoundError`   | `update` on a row that doesn't exist                                                                                            |
+| `Error`              | A built-in transform without secrets, a damaged `.secrets` file, or an `&` value that can't be decrypted (wrong key or altered) |
 
 ```
 Invalid value:
@@ -575,4 +760,8 @@ Invalid value:
   limits.
 - Transforms and indexes work on top-level fields only.
 - `"id"` values are time-ordered ULIDs: don't use them as secrets.
+- bcrypt (`*`) runs in the calling thread: about 60ms per save or
+  `compare`, during which nothing else runs.
+- Losing the `.secrets` file (or the `secrets` you pass) makes `#` fields
+  unsearchable, `*` passwords uncheckable and `&` fields unreadable.
 - Processes opened before a migration aren't stopped by the lock.

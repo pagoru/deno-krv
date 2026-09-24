@@ -2,8 +2,9 @@ import type {
   KrvAppliedMigration,
   KrvEvents,
   KrvKey,
-  KrvMigration,
+  KrvLoadedMigration,
   KrvMigrationDb,
+  KrvUntypedDb,
   KrvMigrationSource,
   KrvValidators,
 } from "./types/main.ts";
@@ -18,6 +19,11 @@ import {
   secondaryPrefix,
   uniqueKey,
 } from "./registry.ts";
+import {
+  MIGRATION_EXTENSIONS,
+  MIGRATION_NAME_FORMAT,
+  parseMigrationName,
+} from "./migration-name.ts";
 import { KrvSchemaError } from "./schema.ts";
 import { loadRow } from "./values.ts";
 
@@ -335,22 +341,69 @@ const rebuildIndexes = async (
 
 // ---- Migrations ----
 
-const loadMigrations = async (sources: KrvMigrationSource[]) => {
-  const migrations: KrvMigration[] = [];
+/** `file:///app/migrations/2026-09-24--001--users.ts` → `2026-09-24--001--users` */
+const fileNameOf = (url: string) => {
+  let pathname = url;
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    // Not a URL: a plain path.
+  }
+  return decodeURIComponent(pathname.replace(/^.*[\\/]/, "")).replace(
+    MIGRATION_EXTENSIONS,
+    "",
+  );
+};
+
+const loadMigrations = async (
+  sources: KrvMigrationSource[],
+): Promise<KrvLoadedMigration[]> => {
+  const migrations: (KrvLoadedMigration & { order: [string, number] })[] = [];
+  const ids = new Map<string, string>();
   for (const source of sources) {
     const loaded = await source;
     const migration = "default" in loaded ? loaded.default : loaded;
-    if (!migration?.id || typeof migration.up !== "function") {
+    if (
+      typeof migration?.url !== "string" ||
+      typeof migration.up !== "function"
+    ) {
       throw new KrvSchemaError(
-        `Invalid migration: needs an "id" and an "up" function`,
+        `Invalid migration: its default export needs "url: import.meta.url" ` +
+          `and an "up" function`,
       );
     }
-    if (migrations.some((m) => m.id === migration.id)) {
-      throw new KrvSchemaError(`Migration "${migration.id}" is declared twice`);
+
+    const fileName = fileNameOf(migration.url);
+    const parsed = parseMigrationName(fileName);
+    if (!parsed) {
+      throw new KrvSchemaError(
+        `Migration "${fileName}": the file name must be ${MIGRATION_NAME_FORMAT}, ` +
+          `e.g. "2026-09-24--001--add-age.ts"`,
+      );
     }
-    migrations.push(migration);
+    const other = ids.get(parsed.id);
+    if (other !== undefined) {
+      throw new KrvSchemaError(
+        other === fileName
+          ? `Migration "${fileName}" is declared twice`
+          : `Migrations "${other}" and "${fileName}" share the number ${parsed.id}`,
+      );
+    }
+    ids.set(parsed.id, fileName);
+
+    migrations.push({
+      ...migration,
+      id: parsed.id,
+      fileName,
+      ...(parsed.name ? { name: parsed.name } : {}),
+      order: [parsed.date, parsed.number],
+    });
   }
-  return migrations.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return migrations
+    .sort(({ order: [a, n] }, { order: [b, m] }) =>
+      a < b ? -1 : a > b ? 1 : n - m,
+    )
+    .map(({ order: _, ...migration }) => migration);
 };
 
 export type PrepareOptions = {
@@ -369,7 +422,7 @@ export type PrepareOptions = {
 export const prepare = async (
   state: DatabaseState,
   registry: Registry,
-  db: Omit<KrvMigrationDb, "raw" | "transforms">,
+  db: KrvUntypedDb,
   options: PrepareOptions,
 ) => {
   const { path, events } = options;
@@ -420,7 +473,7 @@ export const prepare = async (
     transforms: registry.transforms,
   };
 
-  let running: KrvMigration | null = null;
+  let running: KrvLoadedMigration | null = null;
   try {
     if (pending.length) {
       await events.beforeMigrations?.({ pending, backupPath: backupFile });
@@ -429,10 +482,11 @@ export const prepare = async (
       running = migration;
       await events.beforeMigration?.({ migration });
       const start = performance.now();
-      await migration.up(migrationDb);
+      await migration.up(migrationDb as never);
       const durationMs = Math.round(performance.now() - start);
       await state.kv.set(migrationKey(migration.id), {
         id: migration.id,
+        fileName: migration.fileName,
         description: migration.description,
         appliedAt: Date.now(),
         durationMs,
