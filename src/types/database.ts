@@ -360,3 +360,37 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
   /** Closes the database. */
   close: () => void;
 }
+
+type TablesOf<Db> =
+  Db extends KrvDatabase<infer Tables, infer _E> ? Tables : never;
+
+type ReadonlyLiterals<L> = L extends readonly string[] ? Readonly<L> : never;
+
+/**
+ * Row type of table, as read back. `Db` is the database's type, so custom
+ * validators and transforms resolve; the table is named by its key's literal
+ * parts, as in `insert` and `list`.
+ *
+ * @example
+ * ```ts
+ * export type Post = KrvRow<typeof db, ["posts"]>;
+ * ```
+ */
+export type KrvRow<Db, Literals extends KrvAnyLiterals<TablesOf<Db>>> =
+  Db extends KrvDatabase<infer Tables, infer E>
+    ? KrvValueAtLiterals<Tables, E, ReadonlyLiterals<Literals>>
+    : never;
+
+/**
+ * What `insert` accepts for a table: generated fields and timestamps may be
+ * left out.
+ *
+ * @example
+ * ```ts
+ * export type NewPost = KrvInput<typeof db, ["posts"]>;
+ * ```
+ */
+export type KrvInput<Db, Literals extends KrvAnyLiterals<TablesOf<Db>>> =
+  Db extends KrvDatabase<infer Tables, infer E>
+    ? KrvInputAtLiterals<Tables, E, ReadonlyLiterals<Literals>>
+    : never;
