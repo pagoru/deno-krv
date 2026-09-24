@@ -222,13 +222,14 @@ Arguments are numbers, `|text|`, `true`, `false` or `null`. Typos
 ## Transforms
 
 A character after a field name stores something else than the plain value.
-Three are built in, no setup needed:
+Four are built in, no setup needed:
 
-| Character | Stores                          | Reads back | Search                                |
-| --------- | ------------------------------- | ---------- | ------------------------------------- |
-| `#`       | HMAC-SHA256 (hex) of the value  | The hash   | `where`, indexes                      |
-| `*`       | bcrypt (cost 10), peppered      | The hash   | No; check with `compare()`            |
-| `&`       | AES-256-GCM of the value (JSON) | The value  | Through an index `using: "#"` (below) |
+| Character | Stores                          | Reads back     | Search                                |
+| --------- | ------------------------------- | -------------- | ------------------------------------- |
+| `#`       | HMAC-SHA256 (hex) of the value  | The hash       | `where`, indexes                      |
+| `*`       | bcrypt (cost 10), peppered      | The hash       | No; check with `compare()`            |
+| `&`       | AES-256-GCM of the value (JSON) | The value      | Through an index `using: "#"` (below) |
+| `~`       | The value, lowercased           | The lowercased | `where`, indexes (case-insensitive)   |
 
 ```ts
 const db = await openKRV({
@@ -240,9 +241,11 @@ const db = await openKRV({
         "pin*": "string", // hashed, check with db.compare
         "nickname#": "string", // hashed, searchable
         "phone&": "string", // encrypted, read back decrypted
+        "handle~": "string", // lowercased, searched ignoring case
       },
       indexes: {
         byPhone: { fields: ["phone"], using: "#", unique: true }, // see below
+        byHandle: { fields: ["handle"], unique: true }, // "Ana" and "ana" clash
       },
     },
   ],
@@ -252,15 +255,21 @@ const m = await db.insert(["members"], {
   pin: "1234",
   nickname: "ana",
   phone: "+34600000000",
+  handle: "Ana",
 });
 
 m.value.phone; // "+34600000000" (decrypted)
+m.value.handle; // "ana"
 await db.compare(m.key, "pin", "1234"); // true
 await db.list(["members"], { where: { nickname: "ana" } }); // hashed, then compared
 await db.list(["members"], { where: { phone: "+34600000000" } }); // via byPhone
+await db.list(["members"], { where: { handle: "ANA" } }); // lowercased, then compared
 ```
 
-All three use a secret, so stored values can't be read or guessed from the
+`~` validates the value as given (so a validator sees `"Ana"`), then stores
+it lowercased; the original case isn't kept. Only strings are lowercased.
+
+`#`, `*` and `&` use a secret, so stored values can't be read or guessed from the
 database alone (a plain hash of a phone number or a short nickname can be
 brute-forced). `#` and `&` derive separate keys (HKDF) from the same `key`
 secret. The password is peppered with HMAC-SHA256 before bcrypt, so passwords
@@ -293,12 +302,13 @@ Passed secrets are used as is and never written. The file is only created
 while at least one built-in transform isn't replaced.
 
 Declare your own transforms under `transforms`, with any character that can't
-be part of a field name. Declaring `#`, `*` or `&` replaces the built-in one:
+be part of a field name. Declaring `#`, `*`, `&` or `~` replaces the built-in
+one:
 
 ```ts
 const db = await openKRV({
   transforms: {
-    "~": { save: (v) => compress(v), load: (v) => decompress(v) },
+    "%": { save: (v) => compress(v), load: (v) => decompress(v) },
   },
   tables,
 });
@@ -332,7 +342,7 @@ await db.insert(
 
 A field with a `load` (like `&`) is loaded first: it must be readable with the
 current secrets, it's validated as its plain value and it's returned decrypted.
-One without a `load` (`*`, `#`) isn't validated, since only the stored form is
+One without a `load` (`*`, `#`, `~`) isn't validated, since only the stored form is
 known. Only transformed fields can be `raw`; with `update`, only those the
 patch sets are affected.
 
@@ -730,7 +740,7 @@ Also exported:
 | `KrvDatabase<Tables, Env>`                          | The type of an open database                                                                                        |
 | `KrvMigration<Db?>`, `KrvLoadedMigration`           | A migration as written (`url`, `up`, …; `db` typed as `Db` if given), and as loaded (plus `id`, `fileName`, `name`) |
 | `KrvSecrets`                                        | `{ key, pepper }` for the `secrets` option                                                                          |
-| `KrvDefaultTransforms`                              | The types of the built-in `#`, `*` and `&`                                                                          |
+| `KrvDefaultTransforms`                              | The types of the built-in `#`, `*`, `&` and `~`                                                                     |
 
 To name the database type in your code, use `defineKRV` (see
 [Typed migrations](#typed-migrations)), or take it from the open call when

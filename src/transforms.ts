@@ -113,15 +113,19 @@ export type KrvDefaultTransforms = {
     save: (value: unknown) => Promise<string>;
     load: (stored: string) => Promise<unknown>;
   };
+  "~": {
+    save: (value: unknown) => unknown;
+    deterministic: true;
+  };
 };
 
 /** The default transforms, minus those replaced by `T`, plus `T`. */
 export type KrvWithDefaultTransforms<T> = Omit<KrvDefaultTransforms, keyof T> &
   T;
 
-/** Which secret each built-in transform needs. */
+/** Which secret each built-in transform needs (`~` needs none). */
 export const DEFAULT_TRANSFORM_SECRETS: Record<
-  keyof KrvDefaultTransforms,
+  Exclude<keyof KrvDefaultTransforms, "~">,
   keyof KrvSecrets
 > = { "#": "key", "*": "pepper", "&": "key" };
 
@@ -135,11 +139,13 @@ export const DEFAULT_TRANSFORM_SECRETS: Record<
  *   only checkable with `db.compare`.
  * - `&`: AES-256-GCM, keyed from the `key` secret. Read back decrypted; a
  *   random nonce makes it not searchable (index it `using: "#"`).
+ * - `~`: lowercased (strings only, other values as they are). Deterministic,
+ *   so `where` and unique indexes ignore case. No secret.
  */
 export const createDefaultTransforms = (
   secrets: () => Partial<KrvSecrets>,
 ): KrvDefaultTransforms => {
-  const secret = (char: keyof KrvDefaultTransforms) => {
+  const secret = (char: keyof typeof DEFAULT_TRANSFORM_SECRETS) => {
     const name = DEFAULT_TRANSFORM_SECRETS[char];
     const value = secrets()[name];
     if (value === undefined) {
@@ -167,6 +173,11 @@ export const createDefaultTransforms = (
     "&": {
       save: async (value) => await encrypt(secret("&"), value),
       load: async (stored) => await decrypt(secret("&"), stored),
+    },
+    "~": {
+      save: (value) =>
+        typeof value === "string" ? value.toLowerCase() : value,
+      deterministic: true,
     },
   };
 };

@@ -55,8 +55,8 @@ export type KrvConfig<V, F, T, Tables extends readonly unknown[]> = {
    * What a field name's transform character stores instead of the plain
    * value: `"*": { save, compare }`, `"&": { save, load }`,
    * `"#": { save, deterministic: true }`. `#` (HMAC-SHA256), `*` (peppered
-   * bcrypt) and `&` (AES-256-GCM) are built in; declaring them here replaces
-   * them.
+   * bcrypt), `&` (AES-256-GCM) and `~` (lowercase) are built in; declaring
+   * them here replaces them.
    */
   transforms?: T & KrvTransforms;
   /**
@@ -181,8 +181,8 @@ export const openKRV = async <
    * What a field name's transform character stores instead of the plain
    * value: `"*": { save, compare }`, `"&": { save, load }`,
    * `"#": { save, deterministic: true }`. `#` (HMAC-SHA256), `*` (peppered
-   * bcrypt) and `&` (AES-256-GCM) are built in; declaring them here replaces
-   * them.
+   * bcrypt), `&` (AES-256-GCM) and `~` (lowercase) are built in; declaring
+   * them here replaces them.
    */
   transforms?: T & KrvTransforms;
   /**
