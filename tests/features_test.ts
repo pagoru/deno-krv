@@ -16,6 +16,8 @@ import {
 } from "../src/main.ts";
 import { fulfilled, rejected, settle } from "./_helpers.ts";
 import { transforms } from "./_crypto.ts";
+import { loadSecrets } from "../src/secrets.ts";
+import { createDefaultTransforms } from "../src/transforms.ts";
 
 // The shared example: accounts, transactions, gift codes and admins.
 const tables = [
@@ -292,6 +294,207 @@ Deno.test(
       "isn't deterministic",
     );
     db.close();
+  },
+);
+
+const pinned = [
+  table({
+    key: ["pinned", "{memberId}"],
+    schema: {
+      id: "{memberId}",
+      "pin*": "string",
+      "nickname#": "string",
+      "phone&?": "string",
+      "tags[]&?": "string",
+      "age&?": "number",
+    },
+    indexes: { byPhone: { fields: ["phone"], using: "#" } },
+  }),
+];
+
+/** What the built-in `#` stores for `value` with `key`. */
+const hashWith = (key: string, value: string) =>
+  createDefaultTransforms(() => ({ key }))["#"].save(value);
+
+Deno.test(
+  "transforms: # (HMAC) and * (peppered bcrypt) work without declaring them",
+  async () => {
+    const path = await tempPath();
+    const db = await openKRV({ path, tables: pinned });
+    const { key, value } = await db.insert(["pinned"], {
+      pin: "1234",
+      nickname: "ana",
+    });
+    db.close();
+
+    // Secrets are created next to the database, in one binary file readable
+    // by the owner only.
+    const file = await Deno.readFile(`${path}.secrets`);
+    assertEquals(new TextDecoder().decode(file.subarray(0, 4)), "KRVS");
+    assertEquals(file.length, 4 + 1 + 32 + 32);
+    assertEquals((await Deno.stat(`${path}.secrets`)).mode! & 0o777, 0o600);
+    const secret = Array.from(file.subarray(5, 37), (b) =>
+      b.toString(16).padStart(2, "0"),
+    ).join("");
+
+    const stored = (await raw(path, key))!;
+    assertEquals(stored.nickname, await hashWith(secret, "ana"));
+    assert((stored.pin as string).startsWith("$2a$10$"));
+    assertEquals(value.pin, stored.pin);
+
+    // Reopened, the same secrets are read back.
+    const reopened = await openKRV({ path, tables: pinned });
+    assertEquals(await Deno.readFile(`${path}.secrets`), file);
+    assert(await reopened.compare(key, "pin", "1234"));
+    assert(!(await reopened.compare(key, "pin", "4321")));
+    assert(await reopened.compare(key, "nickname", "ana"));
+    const [found] = await reopened.list(["pinned"], {
+      where: { nickname: "ana" },
+    });
+    assertEquals(found.id, value.id);
+    assertThrows(
+      // @ts-expect-error "*" isn't deterministic
+      () => reopened.list(["pinned"], { where: { pin: "1234" } }),
+      Error,
+      "isn't deterministic",
+    );
+    reopened.close();
+  },
+);
+
+Deno.test(
+  "transforms: & (AES-GCM) encrypts, reads back decrypted, searchable through #",
+  async () => {
+    const path = await tempPath();
+    const db = await openKRV({ path, tables: pinned });
+    const a = await db.insert(["pinned"], {
+      pin: "1234",
+      nickname: "ana",
+      phone: "+34600000000",
+      tags: ["x", "y"],
+      age: 30,
+    });
+    const b = await db.insert(["pinned"], {
+      pin: "1234",
+      nickname: "bea",
+      phone: "+34600000000",
+    });
+    assertEquals(a.value.phone, "+34600000000");
+    assertEquals(a.value.age, 30);
+    db.close();
+
+    const stored = (await raw(path, a.key))!;
+    const other = (await raw(path, b.key))!;
+    assert(!(stored.phone as string).includes("600"));
+    // Random nonce: the same value encrypts differently each time.
+    assertNotEquals(stored.phone, other.phone);
+    assertEquals((stored.tags as string[]).length, 2);
+
+    const reopened = await openKRV({ path, tables: pinned });
+    const read = (await reopened.get(a.key)).value!;
+    assertEquals(read.phone, "+34600000000");
+    assertEquals(read.tags, ["x", "y"]);
+    assertEquals(read.age, 30); // numbers come back as numbers
+    assert(await reopened.compare(a.key, "phone", "+34600000000"));
+    const found = await reopened.list(["pinned"], {
+      where: { phone: "+34600000000" },
+    });
+    assertEquals(found.length, 2);
+    reopened.close();
+
+    // Another key can't decrypt it.
+    const wrong = await openKRV({
+      path,
+      secrets: { key: "wrong", pepper: "wrong" },
+      tables: pinned,
+    });
+    await assertRejects(() => wrong.get(a.key));
+    wrong.close();
+  },
+);
+
+Deno.test("transforms: replacing all three means no secrets file", async () => {
+  const path = await tempPath();
+  const db = await openKRV({ path, transforms, tables: pinned });
+  db.close();
+  await assertRejects(() => Deno.stat(`${path}.secrets`), Deno.errors.NotFound);
+});
+
+Deno.test("transforms: a damaged secrets file is rejected", async () => {
+  const path = await tempPath();
+  await Deno.writeTextFile(`${path}.secrets`, "not secrets");
+  await assertRejects(
+    () => openKRV({ path, tables: pinned }),
+    Error,
+    "isn't a krv secrets file",
+  );
+});
+
+Deno.test(
+  "transforms: * accepts passwords over bcrypt's 72 bytes",
+  async () => {
+    const db = await openKRV({ path: ":memory:", tables: pinned });
+    const pin = "x".repeat(200);
+    const { key } = await db.insert(["pinned"], { pin, nickname: "ana" });
+    assert(await db.compare(key, "pin", pin));
+    assert(!(await db.compare(key, "pin", pin.slice(0, 72))));
+    db.close();
+  },
+);
+
+Deno.test("transforms: declared ones replace only their default", async () => {
+  const path = await tempPath();
+  const db = await openKRV({
+    path,
+    transforms: { "*": transforms["*"] },
+    tables: pinned,
+  });
+  const { key } = await db.insert(["pinned"], {
+    pin: "1234",
+    nickname: "ana",
+  });
+  db.close();
+
+  const stored = (await raw(path, key))!;
+  assert((stored.pin as string).startsWith("$fake$"));
+  const { key: secret } = await loadSecrets(path, undefined, true);
+  assertEquals(stored.nickname, await hashWith(secret!, "ana"));
+});
+
+Deno.test("transforms: secrets passed to openKRV aren't written", async () => {
+  const path = await tempPath();
+  const secrets = { key: "my-key", pepper: "my-pepper" };
+  const db = await openKRV({ path, secrets, tables: pinned });
+  const { key } = await db.insert(["pinned"], {
+    pin: "1234",
+    nickname: "ana",
+  });
+  db.close();
+
+  assertEquals(
+    (await raw(path, key))!.nickname,
+    await hashWith("my-key", "ana"),
+  );
+  await assertRejects(() => Deno.stat(`${path}.secrets`), Deno.errors.NotFound);
+
+  // Another pepper doesn't match.
+  const other = await openKRV({
+    path,
+    secrets: { ...secrets, pepper: "other" },
+    tables: pinned,
+  });
+  assert(!(await other.compare(key, "pin", "1234")));
+  other.close();
+});
+
+Deno.test(
+  "transforms: without secrets or a file, #, * and & throw",
+  async () => {
+    const secrets = await loadSecrets(undefined, undefined, true);
+    const defaults = createDefaultTransforms(() => secrets);
+    await assertRejects(() => defaults["#"].save("x"), Error, "needs a key");
+    await assertRejects(() => defaults["*"].save("x"), Error, "needs a pepper");
+    await assertRejects(() => defaults["&"].save("x"), Error, "needs a key");
   },
 );
 
@@ -575,6 +778,31 @@ Deno.test(
       () => db.list(["notes"], { where: { secret: "x" } }),
       Error,
       'using: "#"',
+    );
+    db.close();
+  },
+);
+
+Deno.test(
+  "using: the transform a field is already stored with indexes it as stored",
+  async () => {
+    const db = await openKRV({
+      path: ":memory:",
+      transforms,
+      tables: [
+        table({
+          key: ["users", "{userId}"],
+          schema: { id: "{userId}", "email#": "string" },
+          indexes: { byEmail: { fields: ["email"], using: "#", unique: true } },
+        }),
+      ],
+    });
+    await db.insert(["users"], { email: "a@x.dev" });
+    const [found] = await db.list(["users"], { where: { email: "a@x.dev" } });
+    assertEquals(found.email, await transforms["#"].save("a@x.dev"));
+    await assertRejects(
+      () => db.insert(["users"], { email: "a@x.dev" }),
+      KrvConflictError,
     );
     db.close();
   },
