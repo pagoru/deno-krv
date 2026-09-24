@@ -62,8 +62,9 @@ export type KrvConfig<V, F, T, Tables extends readonly unknown[]> = {
   /**
    * The tables, each named by its key's literal parts (`["posts", "{id}"]`
    * is `posts`). Checked against `validators` once they are inferred.
+   * Default none.
    */
-  tables: {
+  tables?: {
     [I in keyof Tables]: Tables[I] &
       KrvTable<readonly string[], KrvSchemaFor<ValidatorMap<V, F>>>;
   };
@@ -76,7 +77,7 @@ export type KrvConfig<V, F, T, Tables extends readonly unknown[]> = {
 export type KrvDefinedConfig<F, T, Tables> = {
   validators?: F;
   transforms?: T;
-  tables: Tables;
+  tables?: Tables;
 };
 
 /** Types carried by a `defineKRV` result, read by `KrvDatabaseOf`. */
@@ -187,8 +188,9 @@ export const openKRV = async <
   /**
    * The tables, each named by its key's literal parts (`["posts", "{id}"]`
    * is `posts`). Checked against `validators` once they are inferred.
+   * Default none.
    */
-  tables: {
+  tables?: {
     [I in keyof Tables]: Tables[I] &
       KrvTable<readonly string[], KrvSchemaFor<ValidatorMap<V, F>>>;
   };
@@ -214,7 +216,7 @@ export const openKRV = async <
   // Loaded once the lock is held, so only one process creates them.
   let secrets: Partial<KrvSecrets> = {};
   const registry = createRegistry(
-    options.tables as unknown as readonly KrvTable[],
+    (options.tables ?? []) as unknown as readonly KrvTable[],
     validators,
     { ...createDefaultTransforms(() => secrets), ...options.transforms },
   );

@@ -6,6 +6,7 @@ import {
   assertThrows,
 } from "@std/assert";
 import {
+  defineKRV,
   KrvConflictError,
   KrvNotFoundError,
   KrvReferenceError,
@@ -1021,3 +1022,12 @@ Deno.test(
     db.close();
   },
 );
+
+Deno.test("tables: optional, so a database can start without any", async () => {
+  const db = await openKRV({ path: ":memory:" });
+  db.close();
+
+  const config = defineKRV({});
+  const defined = await openKRV({ ...config, path: ":memory:" });
+  defined.close();
+});
