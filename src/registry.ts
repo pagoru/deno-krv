@@ -407,10 +407,12 @@ export const createRegistry = (
               `${where}: using "${char}" on "${field}" needs a deterministic transform`,
             );
           }
+          // Already stored with this transform: indexed as stored.
+          if (own?.char === char) continue;
           if (own && !own.transform.load) {
             throw new KrvSchemaError(
               `${where}: "${field}" is stored with "${own.char}", which has no ` +
-                `load, so its plain value can't be indexed`,
+                `load, so its plain value can't be indexed through "${char}"`,
             );
           }
           usingTransforms[field] = transform;
