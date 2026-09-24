@@ -38,7 +38,7 @@ jobs:
         run: yarn run prettier:check
 
       - name: run tests
-        run: yarn run test
+        run: deno task test
 
       - name: Use Deno Version ${{ matrix.deno-version }}
         uses: denoland/setup-deno@v1

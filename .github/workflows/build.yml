@@ -26,7 +26,7 @@ jobs:
         run: yarn run prettier:check
 
       - name: run tests
-        run: yarn run test
+      - run: deno task test
 
       - name: check publish
         run: yarn run publish:check
