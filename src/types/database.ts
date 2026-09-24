@@ -95,6 +95,8 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
    *   - `check`: only write if the row's current versionstamp matches
    *     (`null`: only if it doesn't exist yet).
    *   - `expireIn`: milliseconds until the row expires.
+   *   - `raw`: transformed fields whose values are already stored (a hash,
+   *     ciphertext…), written as they are instead of transformed again.
    * @returns `{ ok: true, versionstamp }`.
    * @throws KrvValidationError if `value` doesn't match the schema.
    * @throws KrvConflictError if `check` fails, a unique index value or the
@@ -115,7 +117,7 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
   set: <const Key extends KrvAnyKey<Tables>>(
     key: Key,
     value: KrvInputAt<Tables, E, Key>,
-    options?: KrvSetOptions,
+    options?: KrvSetOptions<KrvFieldAt<Tables, E, Key>>,
   ) => Promise<KrvCommitResult>;
 
   /**
@@ -135,6 +137,8 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
    * @param options
    *   - `check`: only update if the row's current versionstamp matches.
    *   - `expireIn`: milliseconds until the row expires.
+   *   - `raw`: transformed fields whose values are already stored (a hash,
+   *     ciphertext…), written as they are instead of transformed again.
    * @returns The updated row.
    * @throws KrvNotFoundError if the row doesn't exist.
    * @throws KrvValidationError, KrvConflictError, KrvReferenceError as `set`.
@@ -152,7 +156,7 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
       | ((
           row: KrvValueAt<Tables, E, Key>,
         ) => KrvPatch<KrvInputAt<Tables, E, Key>>),
-    options?: KrvUpdateOptions,
+    options?: KrvUpdateOptions<KrvFieldAt<Tables, E, Key>>,
   ) => Promise<KrvValueAt<Tables, E, Key>>;
 
   /**
@@ -163,7 +167,10 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
    *   `["posts", "{postId}"]`, `["orgs", "members"]` for
    *   `["orgs", "{orgId}", "members", "{memberId}"]`.
    * @param value The row. Validated against the table's schema.
-   * @param options `expireIn`: milliseconds until the row expires.
+   * @param options
+   *   - `expireIn`: milliseconds until the row expires.
+   *   - `raw`: transformed fields whose values are already stored (a hash,
+   *     ciphertext…), written as they are instead of transformed again.
    * @returns The commit result, plus the row's `key` and `value` (including
    *   generated fields and timestamps).
    * @throws KrvValidationError if `value` doesn't match the schema.
@@ -180,7 +187,9 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
   insert: <const Literals extends KrvAnyLiterals<Tables>>(
     literals: Literals,
     value: KrvInputAtLiterals<Tables, E, Literals>,
-    options?: KrvInsertOptions,
+    options?: KrvInsertOptions<
+      keyof KrvValueAtLiterals<Tables, E, Literals> & string
+    >,
   ) => Promise<
     KrvCommitResult & {
       key: KrvRowKeyAtLiterals<Tables, Literals>;

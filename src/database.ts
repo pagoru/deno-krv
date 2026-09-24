@@ -104,6 +104,27 @@ export const createDatabase = <Tables extends KrvTables, E>(
     return row;
   };
 
+  /**
+   * The `raw` fields present in `value`. Throws for a field without a
+   * transform, since it has no stored form to pass.
+   */
+  const rawFields = (
+    table: ParsedTable,
+    raw: readonly string[] | undefined,
+    value: Row,
+  ): Set<string> => {
+    for (const field of raw ?? []) {
+      if (!table.transformed.some((t) => t.field === field)) {
+        throw new Error(
+          `${table.name}.${field}: raw needs a transformed field`,
+        );
+      }
+    }
+    return new Set(
+      (raw ?? []).filter((f) => value[f] !== undefined && value[f] !== null),
+    );
+  };
+
   /** Makes sure the row `target` exists, or is being written in this batch. */
   const assertTarget = async (
     batch: WriteBatch,
@@ -368,6 +389,7 @@ export const createDatabase = <Tables extends KrvTables, E>(
   ): Promise<{ result: KrvCommitResult; row: Row; stored: Row }> => {
     const table = registry.resolveKey(key);
     const { check, expireIn } = options;
+    const raw = rawFields(table, options.raw, value);
 
     for (let attempt = 0; attempt <= MAX_CONFLICT_RETRIES; attempt++) {
       if (attempt > 0) await backoff(attempt);
@@ -388,8 +410,16 @@ export const createDatabase = <Tables extends KrvTables, E>(
       );
 
       const now = Date.now();
-      const row = fill(table, value, key, current.value, now);
-      validate(table, row, keep);
+      const filled = fill(table, value, key, current.value, now);
+      // Raw fields: stored as given, but loaded (when they can be) to check
+      // they're readable and valid, and to return their plain values.
+      const rawStored = Object.fromEntries([...raw].map((f) => [f, filled[f]]));
+      const row = { ...filled, ...(await loadRow(table, rawStored)) };
+      validate(
+        table,
+        row,
+        new Set([...keep, ...[...raw].filter((f) => table.opaque.has(f))]),
+      );
 
       const exists = current.versionstamp !== null;
       if (!exists && !keysEqual(registry.rowKey(table, row), key)) {
@@ -399,7 +429,10 @@ export const createDatabase = <Tables extends KrvTables, E>(
         );
       }
 
-      const stored = await saveRow(table, row, keep);
+      const stored = {
+        ...(await saveRow(table, row, new Set([...keep, ...raw]))),
+        ...rawStored,
+      };
       const batch = new WriteBatch().check(key, current.versionstamp);
       await planWrite(
         batch,
@@ -588,6 +621,7 @@ export const createDatabase = <Tables extends KrvTables, E>(
     options: KrvUpdateOptions = {},
   ) => {
     const table = registry.resolveKey(key);
+    rawFields(table, options.raw, {}); // checks the names before filtering them
     for (let attempt = 0; attempt <= MAX_CONFLICT_RETRIES; attempt++) {
       if (attempt > 0) await backoff(attempt);
 
@@ -607,6 +641,8 @@ export const createDatabase = <Tables extends KrvTables, E>(
         const written = await write(key, merged, {
           check: current.versionstamp,
           expireIn: options.expireIn,
+          // Only what the patch sets: the rest of `merged` is loaded values.
+          raw: options.raw?.filter((field) => field in changes),
         });
         return output(table, written.row, written.stored);
       } catch (error) {
@@ -632,7 +668,7 @@ export const createDatabase = <Tables extends KrvTables, E>(
     const table = registry.resolveLiterals(literals);
     const now = Date.now();
     const row = fill(table, value, null, null, now);
-    validate(table, row, new Set());
+    validate(table, row, rawFields(table, options.raw, row));
 
     const key = registry.rowKey(table, row);
     const written = await write(key, row, { ...options, check: null });
