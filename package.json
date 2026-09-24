@@ -1,9 +1,12 @@
 {
   "scripts": {
     "prettier:check": "prettier -c ./",
-    "prettier:write": "prettier --write ."
+    "prettier:write": "prettier --write .",
+    "publish": "npx jsr publish --allow-dirty",
+    "publish:check": "npx jsr publish --allow-dirty --dry-run"
   },
   "devDependencies": {
+    "jsr": "^0.13.2",
     "prettier": "3.9.6"
   },
   "packageManager": "yarn@4.6.0"

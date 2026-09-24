@@ -1,4 +1,5 @@
 import type {
+  KrvDatabase,
   KrvEnv,
   KrvEvents,
   KrvMigrationSource,
@@ -105,7 +106,7 @@ export const openKRV = async <
     /** Milliseconds before an untouched lock file is taken over. Default 30s. */
     lockTimeout?: number;
   },
-) => {
+): Promise<KrvDatabase<Tables, KrvEnv<ValidatorMap<V, F>, T>>> => {
   const { path } = options;
   const validators = options.validators as unknown as KrvValidators | undefined;
   const registry = createRegistry(
