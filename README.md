@@ -314,6 +314,28 @@ const db = await openKRV({
 Validation runs on the plain value. Transforms work on top-level fields, and
 on each item of `[]`/`{}`.
 
+**Writing stored values (`raw`)**: to write a value that is already hashed or
+encrypted (users imported with their bcrypt hashes, a ciphertext copied from
+another row), list the field in `raw`. It's stored as given instead of going
+through the transform again. `insert`, `set` and `update` take it:
+
+```ts
+await db.update(m.key, { pin: storedHash }, { raw: ["pin"] });
+await db.insert(
+  ["members"],
+  { pin: storedHash, nickname: "ana", phone },
+  {
+    raw: ["pin"],
+  },
+);
+```
+
+A field with a `load` (like `&`) is loaded first: it must be readable with the
+current secrets, it's validated as its plain value and it's returned decrypted.
+One without a `load` (`*`, `#`) isn't validated, since only the stored form is
+known. Only transformed fields can be `raw`; with `update`, only those the
+patch sets are affected.
+
 **Searching an encrypted field**: an encrypted value (`&`) is different every
 time, so it can't be compared as stored. Give it an index `using` a
 deterministic transform: the index is keyed by the hash of the plain value, and
@@ -687,9 +709,9 @@ manages the data and no file is written, so pass `secrets`.
 | `openKRV({ path, tables, … })`                                      | Opens, migrates and checks. Options: `validators`, `transforms`, `migrations`, `events`, `secrets`, `lockTimeout` |
 | `table({ key, schema, … })`                                         | Optional: keeps a table's types when defined outside `openKRV`. Options: `indexes`, `timestamps`                  |
 | `get(key, { expand? })`                                             | One row, or `value: null`                                                                                         |
-| `insert(literals, value)`                                           | New row; returns `{ key, value }`                                                                                 |
-| `update(key, patch \| (row) => patch, { check? })`                  | Partial update, merged atomically; returns the row                                                                |
-| `set(key, value, { check? })`                                       | Create or replace; `check` a versionstamp for optimistic concurrency                                              |
+| `insert(literals, value, { raw? })`                                 | New row; returns `{ key, value }`                                                                                 |
+| `update(key, patch \| (row) => patch, { check?, raw? })`            | Partial update, merged atomically; returns the row                                                                |
+| `set(key, value, { check?, raw? })`                                 | Create or replace; `check` a versionstamp for optimistic concurrency; `raw` fields are written as stored          |
 | `delete(key, { cascade? })`                                         | Delete; `cascade` deletes referencing rows                                                                        |
 | `list(literals, { where, filter, limit, reverse, values, expand })` | Rows: await for an array or `for await` to stream; `values: false` for entries                                    |
 | `find(literals, { where, filter, reverse, values, expand })`        | First matching row, or `null`                                                                                     |

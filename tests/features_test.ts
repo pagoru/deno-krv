@@ -16,7 +16,7 @@ import {
   table,
 } from "../src/main.ts";
 import { fulfilled, rejected, settle } from "./_helpers.ts";
-import { transforms } from "./_crypto.ts";
+import { decrypt, encrypt, slowHash, transforms } from "./_crypto.ts";
 import { loadSecrets } from "../src/secrets.ts";
 import { createDefaultTransforms } from "../src/transforms.ts";
 
@@ -252,6 +252,70 @@ Deno.test(
     db.close();
   },
 );
+
+Deno.test("transforms: raw writes stored values as they are", async () => {
+  const path = await tempPath();
+  const db = await open(path);
+  const { key, value } = await account(db, "a@x.dev");
+  const hash = await slowHash("imported-password");
+  const cipher = encrypt("b@x.dev");
+
+  // update: only the raw fields change, as given.
+  const updated = await db.update(
+    key,
+    { password: hash, email: cipher },
+    { raw: ["password", "email"] },
+  );
+  assertEquals(updated.password, hash);
+  assertEquals(updated.email, "b@x.dev"); // loaded
+  const stored = (await raw(path, key))!;
+  assertEquals(stored.password, hash);
+  assertEquals(stored.email, cipher);
+  assert(await db.compare(key, "password", "imported-password"));
+
+  // A raw field left out of the patch isn't written as its loaded value.
+  await db.update(key, { verified: false }, { raw: ["email"] });
+  assertEquals(decrypt((await raw(path, key))!.email as string), "b@x.dev");
+
+  // set and insert.
+  await db.set(key, { ...value, password: hash }, { raw: ["password"] });
+  assertEquals((await raw(path, key))!.password, hash);
+  const other = await db.insert(
+    ["accounts"],
+    {
+      emailHash: "c@x.dev",
+      email: encrypt("c@x.dev"),
+      password: hash,
+      verified: true,
+    },
+    { raw: ["email", "password"] },
+  );
+  assertEquals(other.value.email, "c@x.dev");
+  assertEquals((await raw(path, other.key))!.password, hash);
+
+  // Loadable raw values must load and be valid; plain fields can't be raw.
+  await assertRejects(
+    () => db.update(key, { email: "b@x.dev" }, { raw: ["email"] }),
+    Error,
+    "not encrypted",
+  );
+  await assertRejects(
+    () => db.update(key, { email: encrypt("nope") }, { raw: ["email"] }),
+    KrvValidationError,
+  );
+  await assertRejects(
+    () => db.update(key, { verified: true }, { raw: ["verified"] }),
+    Error,
+    "raw needs a transformed field",
+  );
+  await assertRejects(
+    // @ts-expect-error not a field of accounts
+    () => db.update(key, { verified: true }, { raw: ["nope"] }),
+    Error,
+    "raw needs a transformed field",
+  );
+  db.close();
+});
 
 Deno.test("transforms: compare", async () => {
   const db = await open();

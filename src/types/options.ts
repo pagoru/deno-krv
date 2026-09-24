@@ -4,8 +4,15 @@ export type KrvGetOptions = {
   consistency?: KrvConsistency;
 };
 
-export type KrvSetOptions = {
+export type KrvSetOptions<Field extends string = string> = {
   expireIn?: number;
+  /**
+   * Transformed fields whose values are already stored values (a hash,
+   * ciphertext…), written as they are instead of through the transform.
+   * Fields with a `load` are loaded first, so they must be readable with the
+   * current secrets and are validated as plain values.
+   */
+  raw?: readonly Field[];
   /**
    * Only write if the key's current versionstamp matches.
    * `null` means "only write if the key doesn't exist yet".
@@ -13,8 +20,15 @@ export type KrvSetOptions = {
   check?: string | null;
 };
 
-export type KrvInsertOptions = {
+export type KrvInsertOptions<Field extends string = string> = {
   expireIn?: number;
+  /**
+   * Transformed fields whose values are already stored values (a hash,
+   * ciphertext…), written as they are instead of through the transform.
+   * Fields with a `load` are loaded first, so they must be readable with the
+   * current secrets and are validated as plain values.
+   */
+  raw?: readonly Field[];
 };
 
 export type KrvDeleteOptions = {
@@ -44,10 +58,17 @@ export type KrvListOptions<Row, Where = { [K in keyof Row]?: Row[K] }> = {
   values?: boolean;
 };
 
-export type KrvUpdateOptions = {
+export type KrvUpdateOptions<Field extends string = string> = {
   /** Only update if the row's current versionstamp matches. */
   check?: string;
   expireIn?: number;
+  /**
+   * Transformed fields whose values are already stored values (a hash,
+   * ciphertext…), written as they are instead of through the transform.
+   * Fields with a `load` are loaded first, so they must be readable with the
+   * current secrets and are validated as plain values.
+   */
+  raw?: readonly Field[];
 };
 
 type Replaced = Date | Uint8Array | readonly unknown[];
