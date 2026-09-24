@@ -1,0 +1,23 @@
+{
+  "name": "deno-krv",
+  "exports": "./mod.ts",
+  "unstable": [
+    "kv"
+  ],
+  "tasks": {
+    "start": "deno run -A --watch=./src --watch=./tests ./tests/test.ts",
+    "test": "deno test -A"
+  },
+  "imports": {
+    "@std/assert": "jsr:@std/assert@^1.0.19",
+    "@std/ulid": "jsr:@std/ulid@^1.0.0"
+  },
+  "test": {
+    "include": [
+      "tests/"
+    ],
+    "exclude": [
+      "tests/test.ts"
+    ]
+  }
+}
