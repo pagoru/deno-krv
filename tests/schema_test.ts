@@ -1,4 +1,5 @@
 import { assertEquals, assertRejects } from "@std/assert";
+import type { KrvInput, KrvRow } from "../src/main.ts";
 import {
   KrvSchemaError,
   KrvValidationError,
@@ -401,5 +402,76 @@ Deno.test("schema: inferred row types", async () => {
   const expected: Expected = value;
   const back: typeof value = expected;
   assertEquals(back, value);
+  db.close();
+});
+
+Deno.test("schema: KrvRow and KrvInput name a table's types", async () => {
+  const db = await openKRV({
+    path: ":memory:",
+    validators: { email: ["string", (v) => v.includes("@")] },
+    tables: [
+      table({
+        key: ["users", "{userId}"],
+        schema: { id: "{userId}", email: "email", name: "string" },
+      }),
+      table({
+        key: ["posts", "{postId}"],
+        schema: {
+          id: "{postId}",
+          userId: "{users.userId}",
+          title: "string",
+          "visible?": "boolean",
+        },
+      }),
+    ],
+  });
+  type Db = typeof db;
+
+  // Assignments both ways: the named type is exactly this.
+  type User = KrvRow<Db, ["users"]>;
+  type ExpectedUser = {
+    id: string;
+    email: string;
+    name: string;
+    createdAt: number;
+    updatedAt: number;
+  };
+  const toUser = (u: ExpectedUser): User => u;
+  const fromUser = (u: User): ExpectedUser => u;
+
+  type NewPost = KrvInput<Db, ["posts"]>;
+  type ExpectedNewPost = {
+    id?: string;
+    userId: string;
+    title: string;
+    visible?: boolean;
+    createdAt?: number;
+    updatedAt?: number;
+  };
+  const toNewPost = (p: ExpectedNewPost): NewPost => p;
+  const fromNewPost = (p: NewPost): ExpectedNewPost => p;
+  void [toUser, fromUser, toNewPost, fromNewPost];
+
+  const { value: user } = await db.insert(["users"], {
+    email: "a@b.c",
+    name: "A",
+  });
+  const typedUser: User = user;
+  const input: NewPost = { userId: typedUser.id, title: "Hi" };
+  const { value: post } = await db.insert(["posts"], input);
+  const typedPost: KrvRow<Db, ["posts"]> = post;
+  assertEquals(typedPost.title, "Hi");
+
+  // Only type-checked, never run.
+  const compileOnly = () => {
+    // @ts-expect-error there is no "nope" table
+    type Missing = KrvRow<Db, ["nope"]>;
+    // @ts-expect-error title is required
+    const noTitle: NewPost = { userId: "x" };
+    // @ts-expect-error email is a string
+    const badEmail: Partial<User> = { email: 1 };
+    void [noTitle, badEmail, {} as Missing];
+  };
+  void compileOnly;
   db.close();
 });

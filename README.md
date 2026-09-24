@@ -158,6 +158,26 @@ A schema maps field names to types. Modifiers go on the **name**:
 | `"{placeholder}"`                                     | Key field                                  |
 | `"{table.placeholder}"`                               | Reference to another table                 |
 
+### Row types
+
+Name a table's types from the database, without writing them twice. They follow
+the schema: add a required field and every place that builds a row without it
+becomes a compile error.
+
+```ts
+import type { KrvInput, KrvRow } from "@da/deno-krv";
+
+export type Db = typeof db;
+export type Post = KrvRow<Db, ["posts"]>; // as read back
+export type NewPost = KrvInput<Db, ["posts"]>; // what insert accepts
+
+export const createPost = async (input: NewPost): Promise<Post> =>
+  (await db.insert(["posts"], input)).value;
+```
+
+The table is named by its key's literal parts, as in `insert` and `list`. Custom
+validators and transforms resolve through `Db`.
+
 ---
 
 ## Custom validators
