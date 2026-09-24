@@ -478,6 +478,58 @@ Deno.test(
   },
 );
 
+Deno.test(
+  "transforms: ~ lowercases, so where and unique ignore case",
+  async () => {
+    const path = await tempPath();
+    const handles = [
+      table({
+        key: ["handles", "{handleId}"],
+        schema: {
+          id: "{handleId}",
+          "name~": "handle",
+          "aliases[]~?": "string",
+        },
+        indexes: { byName: { fields: ["name"], unique: true } },
+      }),
+    ];
+    const db = await openKRV({
+      path,
+      // Validators see the value as given, before it's lowercased.
+      validators: { handle: ["string", (v) => /^[A-Za-z]+$/.test(v)] },
+      // `~` needs no secret: with the others replaced, there's no file.
+      transforms,
+      tables: handles,
+    });
+    const { key, value } = await db.insert(["handles"], {
+      name: "PaGoRu",
+      aliases: ["ONE", "Two"],
+    });
+    assertEquals(value.name, "pagoru");
+    assertEquals(value.aliases, ["one", "two"]);
+    assertEquals((await raw(path, key))!.name, "pagoru");
+
+    const found = await db.find(["handles"], { where: { name: "PAGORU" } });
+    assertEquals(found?.id, value.id);
+    assert(await db.compare(key, "name", "Pagoru"));
+
+    await assertRejects(
+      () => db.insert(["handles"], { name: "pagoru" }),
+      KrvConflictError,
+      "unique",
+    );
+    await assertRejects(
+      () => db.insert(["handles"], { name: "pa_goru" }),
+      KrvValidationError,
+    );
+    db.close();
+    await assertRejects(
+      () => Deno.stat(`${path}.secrets`),
+      Deno.errors.NotFound,
+    );
+  },
+);
+
 Deno.test("transforms: replacing all three means no secrets file", async () => {
   const path = await tempPath();
   const db = await openKRV({ path, transforms, tables: pinned });

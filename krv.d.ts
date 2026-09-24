@@ -1328,6 +1328,10 @@ export type KrvDefaultTransforms = {
     save: (value: unknown) => Promise<string>;
     load: (stored: string) => Promise<unknown>;
   };
+  "~": {
+    save: (value: unknown) => unknown;
+    deterministic: true;
+  };
 };
 /** The default transforms, minus those replaced by `T`, plus `T`. */
 export type KrvWithDefaultTransforms<T> = Omit<KrvDefaultTransforms, keyof T> &
@@ -1354,8 +1358,8 @@ export type KrvConfig<V, F, T, Tables extends readonly unknown[]> = {
    * What a field name's transform character stores instead of the plain
    * value: `"*": { save, compare }`, `"&": { save, load }`,
    * `"#": { save, deterministic: true }`. `#` (HMAC-SHA256), `*` (peppered
-   * bcrypt) and `&` (AES-256-GCM) are built in; declaring them here replaces
-   * them.
+   * bcrypt), `&` (AES-256-GCM) and `~` (lowercase) are built in; declaring
+   * them here replaces them.
    */
   transforms?: T & KrvTransforms;
   /**
@@ -1481,8 +1485,8 @@ export declare const openKRV: <
    * What a field name's transform character stores instead of the plain
    * value: `"*": { save, compare }`, `"&": { save, load }`,
    * `"#": { save, deterministic: true }`. `#` (HMAC-SHA256), `*` (peppered
-   * bcrypt) and `&` (AES-256-GCM) are built in; declaring them here replaces
-   * them.
+   * bcrypt), `&` (AES-256-GCM) and `~` (lowercase) are built in; declaring
+   * them here replaces them.
    */
   transforms?: T & KrvTransforms;
   /**
