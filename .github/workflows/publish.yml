@@ -17,6 +17,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - run: corepack enable
 
       - name: Set Versions
         uses: actions/github-script@v4
