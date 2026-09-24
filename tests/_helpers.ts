@@ -92,8 +92,8 @@ export const settle = <T>(promises: Promise<T>[]) =>
   Promise.allSettled(promises);
 
 export const fulfilled = <T>(results: PromiseSettledResult<T>[]) =>
-  results.filter((r): r is PromiseFulfilledResult<T> =>
-    r.status === "fulfilled"
+  results.filter(
+    (r): r is PromiseFulfilledResult<T> => r.status === "fulfilled",
   );
 
 export const rejected = <T>(results: PromiseSettledResult<T>[]) =>
@@ -112,9 +112,13 @@ export const increment = async (
     const current = await db.get(["counters", id]);
     const next = (current.value?.value ?? 0) + 1;
     try {
-      await db.set(["counters", id], { value: next }, {
-        check: current.versionstamp,
-      });
+      await db.set(
+        ["counters", id],
+        { value: next },
+        {
+          check: current.versionstamp,
+        },
+      );
       return attempt;
     } catch (error) {
       if (!isConflict(error)) throw error;

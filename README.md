@@ -79,7 +79,7 @@ tables: [
     key: ["notes", "{noteId}"],
     schema: { id: "{noteId}", text: "string" },
   },
-]
+];
 ```
 
 ```ts
@@ -146,17 +146,17 @@ A schema maps field names to types. Modifiers go on the **name**:
 | `"name[]?"`  | optional `T[]`        |
 | `"name{}[]"` | `Record<string, T>[]` |
 
-| Type                                                  | Meaning                                       |
-| ----------------------------------------------------- | --------------------------------------------- |
-| `"string"` `"number"` `"boolean"` `"bigint"` `"date"` | Built-in types                                |
-| `"unknown"`                                           | Anything (optional)                           |
-| `"id"`                                                | String, a ULID when left empty                |
-| `"\|text\|"`                                          | String literal                                |
-| `1`, `true`, `null`, `undefined`                      | Raw literals                                  |
-| `[a, b]`                                              | Union (`[x, undefined]` makes it optional)    |
-| `{ … }`                                               | Nested object; unknown fields are rejected    |
-| `"{placeholder}"`                                     | Key field                                     |
-| `"{table.placeholder}"`                               | Reference to another table                    |
+| Type                                                  | Meaning                                    |
+| ----------------------------------------------------- | ------------------------------------------ |
+| `"string"` `"number"` `"boolean"` `"bigint"` `"date"` | Built-in types                             |
+| `"unknown"`                                           | Anything (optional)                        |
+| `"id"`                                                | String, a ULID when left empty             |
+| `"\|text\|"`                                          | String literal                             |
+| `1`, `true`, `null`, `undefined`                      | Raw literals                               |
+| `[a, b]`                                              | Union (`[x, undefined]` makes it optional) |
+| `{ … }`                                               | Nested object; unknown fields are rejected |
+| `"{placeholder}"`                                     | Key field                                  |
+| `"{table.placeholder}"`                               | Reference to another table                 |
 
 ---
 
@@ -197,7 +197,10 @@ using your own functions:
 ```ts
 const db = await openKRV({
   transforms: {
-    "*": { save: (v) => bcrypt.hash(v), compare: (p, s) => bcrypt.compare(p, s) },
+    "*": {
+      save: (v) => bcrypt.hash(v),
+      compare: (p, s) => bcrypt.compare(p, s),
+    },
     "#": { save: (v) => sha256(v), deterministic: true },
     "&": { save: (v) => encrypt(v), load: (v) => decrypt(v) },
   },
@@ -229,11 +232,11 @@ await db.list(["members"], { where: { nickname: "ana" } }); // hashed, then comp
 await db.list(["members"], { where: { phone: "+34600000000" } }); // via byPhone
 ```
 
-| Function                 | Meaning                                      |
-| ------------------------ | -------------------------------------------- |
-| `save`                   | What gets stored (required)                  |
-| `load`                   | Restores the value on read                   |
-| `compare(plain, stored)` | Used by `db.compare`                         |
+| Function                 | Meaning                                       |
+| ------------------------ | --------------------------------------------- |
+| `save`                   | What gets stored (required)                   |
+| `load`                   | Restores the value on read                    |
+| `compare(plain, stored)` | Used by `db.compare`                          |
 | `deterministic`          | Same input, same output: searchable/indexable |
 
 Validation runs on the plain value. Transforms work on top-level fields, and
@@ -310,12 +313,15 @@ tables: [
     key: ["books", "{bookId}"],
     schema: { id: "{bookId}", authorId: "{authors.authorId}", title: "string" },
   },
-]
+];
 ```
 
 ```ts
 const le = await db.insert(["authors"], { name: "Le Guin" });
-await db.insert(["books"], { authorId: le.value.id, title: "The Dispossessed" });
+await db.insert(["books"], {
+  authorId: le.value.id,
+  title: "The Dispossessed",
+});
 
 await db.list(["books"], { where: { authorId: le.value.id } });
 
@@ -337,10 +343,10 @@ await db.delete(le.key, { cascade: true }); // deletes her books too
 the property name; the string says which reference to follow, and its
 direction decides the shape:
 
-| `expand: { name: … }`     | Follows                                    | Gives                 |
-| ------------------------- | ------------------------------------------ | --------------------- |
-| `"authorId"`              | a reference field of this row              | one row, or `null`    |
-| `"books.authorId"`        | another table's field pointing to this row | a list of rows        |
+| `expand: { name: … }` | Follows                                    | Gives              |
+| --------------------- | ------------------------------------------ | ------------------ |
+| `"authorId"`          | a reference field of this row              | one row, or `null` |
+| `"books.authorId"`    | another table's field pointing to this row | a list of rows     |
 
 ```ts
 const book = await db.find(["books"], {
@@ -389,7 +395,7 @@ it's merged again on top of it.
 ```ts
 await db.update(["products", "p1"], { price: 9.5 });
 await db.update(["products", "p1"], { dimensions: { height: 2 } }); // merged
-await db.update(["products", "p1"], { "tags": ["sale"] }); // replaced
+await db.update(["products", "p1"], { tags: ["sale"] }); // replaced
 await db.update(["products", "p1"], { discount: undefined }); // removed
 
 // From the current value: concurrent updates never overwrite each other.
@@ -420,7 +426,8 @@ await db.list(["books"], {
   filter: (b) => b.year < 1980, // any condition, typed
 });
 
-for await (const book of db.list(["books"])) {} // stream
+for await (const book of db.list(["books"])) {
+} // stream
 
 const books = await db.list(["books"]); // the rows: books[0].title
 const entries = await db.list(["books"], { values: false }); // { key, value, versionstamp }
@@ -494,38 +501,42 @@ Table "todos": 3 invalid row(s)
 
 ## API reference
 
-| Method                              | Description                                                                 |
-| ----------------------------------- | --------------------------------------------------------------------------- |
-| `openKRV({ path, tables, … })`      | Opens, migrates and checks. Options: `validators`, `transforms`, `migrations`, `events`, `lockTimeout` |
-| `table({ key, schema, … })`         | Optional: keeps a table's types when defined outside `openKRV`. Options: `indexes`, `timestamps` |
-| `get(key, { expand? })`             | One row, or `value: null`                                                   |
-| `insert(literals, value)`           | New row; returns `{ key, value }`                                           |
-| `update(key, patch \| (row) => patch, { check? })` | Partial update, merged atomically; returns the row |
-| `set(key, value, { check? })`       | Create or replace; `check` a versionstamp for optimistic concurrency        |
-| `delete(key, { cascade? })`         | Delete; `cascade` deletes referencing rows                                  |
-| `list(literals, { where, filter, limit, reverse, values, expand })` | Rows: await for an array or `for await` to stream; `values: false` for entries |
-| `find(literals, { where, filter, reverse, values, expand })` | First matching row, or `null` |
-| `compare(key, field, plain)`        | Check a plain value against a transformed field                             |
-| `close()`                           | Close the database                                                          |
+| Method                                                              | Description                                                                                            |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `openKRV({ path, tables, … })`                                      | Opens, migrates and checks. Options: `validators`, `transforms`, `migrations`, `events`, `lockTimeout` |
+| `table({ key, schema, … })`                                         | Optional: keeps a table's types when defined outside `openKRV`. Options: `indexes`, `timestamps`       |
+| `get(key, { expand? })`                                             | One row, or `value: null`                                                                              |
+| `insert(literals, value)`                                           | New row; returns `{ key, value }`                                                                      |
+| `update(key, patch \| (row) => patch, { check? })`                  | Partial update, merged atomically; returns the row                                                     |
+| `set(key, value, { check? })`                                       | Create or replace; `check` a versionstamp for optimistic concurrency                                   |
+| `delete(key, { cascade? })`                                         | Delete; `cascade` deletes referencing rows                                                             |
+| `list(literals, { where, filter, limit, reverse, values, expand })` | Rows: await for an array or `for await` to stream; `values: false` for entries                         |
+| `find(literals, { where, filter, reverse, values, expand })`        | First matching row, or `null`                                                                          |
+| `compare(key, field, plain)`                                        | Check a plain value against a transformed field                                                        |
+| `close()`                                                           | Close the database                                                                                     |
 
 ```ts
 const note = await db.get(["notes", id]);
-await db.set(["notes", id], { ...note.value!, done: true }, {
-  check: note.versionstamp, // KrvConflictError if someone wrote it meanwhile
-});
+await db.set(
+  ["notes", id],
+  { ...note.value!, done: true },
+  {
+    check: note.versionstamp, // KrvConflictError if someone wrote it meanwhile
+  },
+);
 ```
 
 ---
 
 ## Errors
 
-| Error                | When                                                            |
-| -------------------- | --------------------------------------------------------------- |
-| `KrvSchemaError`     | Invalid setup, stale rows or broken indexes (at open)           |
-| `KrvValidationError` | A value doesn't match the schema; `.issues` lists them          |
-| `KrvConflictError`   | A `check` failed, a key or unique value is taken                |
-| `KrvReferenceError`  | A missing reference, or a delete without `cascade`              |
-| `KrvNotFoundError`   | `update` on a row that doesn't exist                            |
+| Error                | When                                                   |
+| -------------------- | ------------------------------------------------------ |
+| `KrvSchemaError`     | Invalid setup, stale rows or broken indexes (at open)  |
+| `KrvValidationError` | A value doesn't match the schema; `.issues` lists them |
+| `KrvConflictError`   | A `check` failed, a key or unique value is taken       |
+| `KrvReferenceError`  | A missing reference, or a delete without `cascade`     |
+| `KrvNotFoundError`   | `update` on a row that doesn't exist                   |
 
 ```
 Invalid value:

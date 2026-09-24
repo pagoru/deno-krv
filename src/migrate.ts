@@ -87,10 +87,13 @@ export const acquireLock = async (
     await sleep(50);
   }
 
-  const heartbeat = setInterval(() => {
-    const now = new Date();
-    Deno.utime(file, now, now).catch(() => {});
-  }, Math.max(10, staleMs / 3));
+  const heartbeat = setInterval(
+    () => {
+      const now = new Date();
+      Deno.utime(file, now, now).catch(() => {});
+    },
+    Math.max(10, staleMs / 3),
+  );
 
   return async () => {
     clearInterval(heartbeat);
@@ -141,9 +144,9 @@ const stable = (value: unknown): string => {
   if (typeof value === "function") return JSON.stringify(String(value));
   if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
   if (value && typeof value === "object") {
-    const entries = Object.keys(value).sort().map((key) =>
-      `${JSON.stringify(key)}:${stable((value as Row)[key])}`
-    );
+    const entries = Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stable((value as Row)[key])}`);
     return `{${entries.join(",")}}`;
   }
   return JSON.stringify(value);
@@ -154,11 +157,9 @@ const sha256 = async (text: string) => {
     "SHA-256",
     new TextEncoder().encode(text),
   );
-  return Array.from(
-    new Uint8Array(digest),
-    (b) => b.toString(16).padStart(2, "0"),
-  )
-    .join("");
+  return Array.from(new Uint8Array(digest), (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join("");
 };
 
 /** Changes whenever the table, or any validator or transform, changes. */
@@ -167,14 +168,16 @@ export const fingerprint = (
   validators: KrvValidators | undefined,
   registry: Registry,
 ) =>
-  sha256(stable({
-    key: table.table.key,
-    schema: table.table.schema,
-    timestamps: table.timestamps,
-    indexes: table.table.indexes ?? {},
-    validators: validators ?? {},
-    transforms: registry.transforms,
-  }));
+  sha256(
+    stable({
+      key: table.table.key,
+      schema: table.table.schema,
+      timestamps: table.timestamps,
+      indexes: table.table.indexes ?? {},
+      validators: validators ?? {},
+      transforms: registry.transforms,
+    }),
+  );
 
 const schemaKey = (table: string) => [INTERNAL, "schema", table];
 const migrationKey = (id: string) => [INTERNAL, "migrations", id];
@@ -288,9 +291,9 @@ const rebuildIndexes = async (
         const owner = seen.get(id);
         if (owner) {
           issues.push(
-            `${keyToString(key)}: ${index.name} (${
-              index.fields.join(", ")
-            }) duplicates ${keyToString(owner)}`,
+            `${keyToString(key)}: ${index.name} (${index.fields.join(
+              ", ",
+            )}) duplicates ${keyToString(owner)}`,
           );
           continue;
         }
@@ -303,9 +306,9 @@ const rebuildIndexes = async (
         if (!target) continue;
         if ((await kv.get(target)).versionstamp === null) {
           issues.push(
-            `${keyToString(key)}: ${reference.field} references missing ${
-              keyToString(target)
-            }`,
+            `${keyToString(key)}: ${reference.field} references missing ${keyToString(
+              target,
+            )}`,
           );
           continue;
         }
@@ -347,7 +350,7 @@ const loadMigrations = async (sources: KrvMigrationSource[]) => {
     }
     migrations.push(migration);
   }
-  return migrations.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  return migrations.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 };
 
 export type PrepareOptions = {
@@ -373,21 +376,19 @@ export const prepare = async (
   const migrations = await loadMigrations(options.migrations);
 
   const applied = new Set<string>();
-  for await (
-    const { value } of state.kv.list<KrvAppliedMigration>({
-      prefix: [INTERNAL, "migrations"],
-    })
-  ) applied.add(value.id);
-  const pending = migrations.filter((m) =>
-    m.enabled !== false && !applied.has(m.id)
+  for await (const { value } of state.kv.list<KrvAppliedMigration>({
+    prefix: [INTERNAL, "migrations"],
+  }))
+    applied.add(value.id);
+  const pending = migrations.filter(
+    (m) => m.enabled !== false && !applied.has(m.id),
   );
 
   const stored = new Map<string, string>();
-  for await (
-    const { key, value } of state.kv.list<string>({
-      prefix: [INTERNAL, "schema"],
-    })
-  ) stored.set(String(key[2]), value);
+  for await (const { key, value } of state.kv.list<string>({
+    prefix: [INTERNAL, "schema"],
+  }))
+    stored.set(String(key[2]), value);
 
   const current = new Map<string, string>();
   for (const table of registry.tables) {
@@ -396,8 +397,8 @@ export const prepare = async (
       await fingerprint(table, options.validators, registry),
     );
   }
-  const changed = registry.tables.filter((t) =>
-    stored.get(t.name) !== current.get(t.name)
+  const changed = registry.tables.filter(
+    (t) => stored.get(t.name) !== current.get(t.name),
   );
   const removed = [...stored.keys()].filter((name) => !current.has(name));
 
@@ -430,15 +431,12 @@ export const prepare = async (
       const start = performance.now();
       await migration.up(migrationDb);
       const durationMs = Math.round(performance.now() - start);
-      await state.kv.set(
-        migrationKey(migration.id),
-        {
-          id: migration.id,
-          description: migration.description,
-          appliedAt: Date.now(),
-          durationMs,
-        } satisfies KrvAppliedMigration,
-      );
+      await state.kv.set(migrationKey(migration.id), {
+        id: migration.id,
+        description: migration.description,
+        appliedAt: Date.now(),
+        durationMs,
+      } satisfies KrvAppliedMigration);
       await events.afterMigration?.({ migration, durationMs });
     }
     running = null;

@@ -18,7 +18,7 @@ export const backoff = (attempt: number) =>
 export const commitWithLockRetry = async (
   build: () => Deno.AtomicOperation,
 ): Promise<Deno.KvCommitResult | Deno.KvCommitError> => {
-  for (let attempt = 1;; attempt++) {
+  for (let attempt = 1; ; attempt++) {
     try {
       return await build().commit();
     } catch (error) {

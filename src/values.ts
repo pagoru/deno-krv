@@ -20,8 +20,10 @@ export const deepEqual = (a: unknown, b: unknown): boolean => {
   }
   if (isPlainObject(a) && isPlainObject(b)) {
     const keys = Object.keys(a);
-    return keys.length === Object.keys(b).length &&
-      keys.every((key) => deepEqual(a[key], b[key]));
+    return (
+      keys.length === Object.keys(b).length &&
+      keys.every((key) => deepEqual(a[key], b[key]))
+    );
   }
   return false;
 };
@@ -29,10 +31,13 @@ export const deepEqual = (a: unknown, b: unknown): boolean => {
 /** `where` semantics: nested plain objects match partially, the rest by value. */
 export const matchesWhere = (value: unknown, where: unknown): boolean => {
   if (isPlainObject(where)) {
-    return isPlainObject(value) &&
-      Object.entries(where).every(([key, expected]) =>
-        expected === undefined || matchesWhere(value[key], expected)
-      );
+    return (
+      isPlainObject(value) &&
+      Object.entries(where).every(
+        ([key, expected]) =>
+          expected === undefined || matchesWhere(value[key], expected),
+      )
+    );
   }
   return deepEqual(value, where);
 };
@@ -51,9 +56,10 @@ const mapItems = async (
   }
   if (outer === "{}" && isPlainObject(value)) {
     const entries = await Promise.all(
-      Object.entries(value).map(async (
-        [key, item],
-      ) => [key, await mapItems(item, inner, fn)]),
+      Object.entries(value).map(async ([key, item]) => [
+        key,
+        await mapItems(item, inner, fn),
+      ]),
     );
     return Object.fromEntries(entries);
   }
@@ -119,12 +125,14 @@ export const mergePatch = (
       continue;
     }
     const field = fields.find((f) => f.name === key);
-    const nested = field && !field.modifiers.length && field.compiled.isObject
-      ? (field.compiled as CompiledObject)
-      : null;
-    merged[key] = nested && isPlainObject(value) && isPlainObject(current[key])
-      ? mergePatch(nested.fields, current[key], value)
-      : value;
+    const nested =
+      field && !field.modifiers.length && field.compiled.isObject
+        ? (field.compiled as CompiledObject)
+        : null;
+    merged[key] =
+      nested && isPlainObject(value) && isPlainObject(current[key])
+        ? mergePatch(nested.fields, current[key], value)
+        : value;
   }
   return merged;
 };

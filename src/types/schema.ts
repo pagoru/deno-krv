@@ -59,14 +59,17 @@ export type KrvNoValidators = Record<never, never>;
 // deno-lint-ignore ban-types
 type Prettify<T> = { [K in keyof T]: T[K] } & {};
 
-type Trim<S> = S extends ` ${infer R}` ? Trim<R>
-  : S extends `${infer R} ` ? Trim<R>
-  : S;
+type Trim<S> = S extends ` ${infer R}`
+  ? Trim<R>
+  : S extends `${infer R} `
+    ? Trim<R>
+    : S;
 
 type SplitParams<S> = S extends `${infer A},${infer R}`
   ? [Trim<A>, ...SplitParams<R>]
-  : Trim<S> extends "" ? []
-  : [Trim<S>];
+  : Trim<S> extends ""
+    ? []
+    : [Trim<S>];
 
 /** `"str(min, max)"` → `"str"` */
 type DeclName<K> = K extends `${infer N}(${string})` ? N : K;
@@ -81,62 +84,89 @@ type FindValidator<Name, F> = {
 
 type BaseOf<V> = V extends readonly [infer Base, unknown] ? Base : never;
 
-type ArgsOf<V> = V extends
-  readonly [unknown, (value: never, args: infer A) => boolean] ? A
+type ArgsOf<V> = V extends readonly [
+  unknown,
+  (value: never, args: infer A) => boolean,
+]
+  ? A
   : never;
 
-type StringSpecType<S extends string, F> = S extends KrvBuiltin ? Builtins[S]
-  : S extends `|${infer L}|` ? L
-  : S extends `{${string}}` ? string
-  : S extends `${infer N}(${string})` ? ValidatorType<FindValidator<N, F>, F>
-  : ValidatorType<FindValidator<S, F>, F>;
+type StringSpecType<S extends string, F> = S extends KrvBuiltin
+  ? Builtins[S]
+  : S extends `|${infer L}|`
+    ? L
+    : S extends `{${string}}`
+      ? string
+      : S extends `${infer N}(${string})`
+        ? ValidatorType<FindValidator<N, F>, F>
+        : ValidatorType<FindValidator<S, F>, F>;
 
-type ValidatorType<K, F> = [K] extends [never] ? never
-  : K extends keyof F ? KrvSpecType<BaseOf<F[K]>, KrvNoValidators>
-  : never;
+type ValidatorType<K, F> = [K] extends [never]
+  ? never
+  : K extends keyof F
+    ? KrvSpecType<BaseOf<F[K]>, KrvNoValidators>
+    : never;
 
 /** TypeScript type of a value spec. `F` holds the custom validators. */
-export type KrvSpecType<S, F> = S extends string ? StringSpecType<S, F>
-  : S extends readonly (infer E)[] ? KrvSpecType<E, F>
-  : S extends number | boolean | null | undefined ? S
-  : S extends object ? KrvObjectType<S, F>
-  : never;
+export type KrvSpecType<S, F> = S extends string
+  ? StringSpecType<S, F>
+  : S extends readonly (infer E)[]
+    ? KrvSpecType<E, F>
+    : S extends number | boolean | null | undefined
+      ? S
+      : S extends object
+        ? KrvObjectType<S, F>
+        : never;
 
 /** `"tags[]?"` → `"tags"` */
-export type KrvFieldName<K> = K extends `${infer R}?` ? KrvFieldName<R>
-  : K extends `${infer R}[]` ? KrvFieldName<R>
-  : K extends `${infer R}{}` ? KrvFieldName<R>
-  : K;
+export type KrvFieldName<K> = K extends `${infer R}?`
+  ? KrvFieldName<R>
+  : K extends `${infer R}[]`
+    ? KrvFieldName<R>
+    : K extends `${infer R}{}`
+      ? KrvFieldName<R>
+      : K;
 
 /** Applies a field name's `[]` / `{}` modifiers to `T`. */
-type Wrap<K, T> = K extends `${infer R}?` ? Wrap<R, T>
-  : K extends `${infer R}[]` ? Wrap<R, T>[]
-  : K extends `${infer R}{}` ? Record<string, Wrap<R, T>>
-  : T;
+type Wrap<K, T> = K extends `${infer R}?`
+  ? Wrap<R, T>
+  : K extends `${infer R}[]`
+    ? Wrap<R, T>[]
+    : K extends `${infer R}{}`
+      ? Record<string, Wrap<R, T>>
+      : T;
 
-type IsOptional<K, S, F> = K extends `${string}?` ? true
-  : undefined extends KrvSpecType<S, F> ? true
-  : false;
+type IsOptional<K, S, F> = K extends `${string}?`
+  ? true
+  : undefined extends KrvSpecType<S, F>
+    ? true
+    : false;
 
 /** Generated when left out on insert: top-level `"id"` and `"{placeholder}"`. */
-type IsGenerated<K, S> = K extends KrvFieldName<K> ? S extends "id" ? true
-  : S extends `{${string}.${string}}` ? false
-  : S extends `{${string}}` ? true
-  : false
-  : false;
+type IsGenerated<K, S> =
+  K extends KrvFieldName<K>
+    ? S extends "id"
+      ? true
+      : S extends `{${string}.${string}}`
+        ? false
+        : S extends `{${string}}`
+          ? true
+          : false
+    : false;
 
 type Field<K, S, F> = Wrap<K, KrvSpecType<S, F>>;
 
 export type KrvObjectType<S, F> = Prettify<
-  & {
+  {
     -readonly [
-      K in keyof S as IsOptional<K, S[K], F> extends true ? never
+      K in keyof S as IsOptional<K, S[K], F> extends true
+        ? never
         : KrvFieldName<K>
     ]-?: Field<K, S[K], F>;
-  }
-  & {
+  } & {
     -readonly [
-      K in keyof S as IsOptional<K, S[K], F> extends true ? KrvFieldName<K>
+      K in keyof S as IsOptional<K, S[K], F> extends true
+        ? KrvFieldName<K>
         : never
     ]?: Field<K, S[K], F>;
   }
@@ -144,53 +174,56 @@ export type KrvObjectType<S, F> = Prettify<
 
 /** What `insert`/`set` accept: generated fields may be left out. */
 export type KrvInputType<S, F> = Prettify<
-  & {
+  {
     -readonly [
-      K in keyof S as IsOptional<K, S[K], F> extends true ? never
-        : IsGenerated<K, S[K]> extends true ? never
-        : KrvFieldName<K>
+      K in keyof S as IsOptional<K, S[K], F> extends true
+        ? never
+        : IsGenerated<K, S[K]> extends true
+          ? never
+          : KrvFieldName<K>
     ]-?: Field<K, S[K], F>;
-  }
-  & {
+  } & {
     -readonly [
-      K in keyof S as IsOptional<K, S[K], F> extends true ? KrvFieldName<K>
-        : IsGenerated<K, S[K]> extends true ? KrvFieldName<K>
-        : never
+      K in keyof S as IsOptional<K, S[K], F> extends true
+        ? KrvFieldName<K>
+        : IsGenerated<K, S[K]> extends true
+          ? KrvFieldName<K>
+          : never
     ]?: Field<K, S[K], F>;
   }
 >;
 
 // ---- Compile-time schema checking ----
 
-type ArgTemplate<T> = [T] extends [never] ? AnyArgTemplate
-  : unknown extends T ? AnyArgTemplate
-  :
-    | (T extends number ? `${number}` : never)
-    | (T extends string ? `|${string}|` : never)
-    | (T extends boolean ? `${T}` : never)
-    | (T extends null ? "null" : never);
+type ArgTemplate<T> = [T] extends [never]
+  ? AnyArgTemplate
+  : unknown extends T
+    ? AnyArgTemplate
+    : | (T extends number ? `${number}` : never)
+      | (T extends string ? `|${string}|` : never)
+      | (T extends boolean ? `${T}` : never)
+      | (T extends null ? "null" : never);
 
 type AnyArgTemplate = `${number}` | `|${string}|` | "true" | "false" | "null";
 
 type JoinArgs<Params, Args> = Params extends [infer P, ...infer Rest]
-  ? Rest extends [] ? ArgTemplate<P extends keyof Args ? Args[P] : never>
-  : `${ArgTemplate<P extends keyof Args ? Args[P] : never>}, ${JoinArgs<
-    Rest,
-    Args
-  >}`
+  ? Rest extends []
+    ? ArgTemplate<P extends keyof Args ? Args[P] : never>
+    : `${ArgTemplate<P extends keyof Args ? Args[P] : never>}, ${JoinArgs<
+        Rest,
+        Args
+      >}`
   : "";
 
 /** Every valid way to use the validators in `F`: `"email"`, `"str(${number}, ${number})"`. */
 type ValidatorUsage<F> = {
-  [K in keyof F & string]: DeclParams<K> extends [] ? K
+  [K in keyof F & string]: DeclParams<K> extends []
+    ? K
     : `${DeclName<K>}(${JoinArgs<DeclParams<K>, ArgsOf<F[K]>>})`;
 }[keyof F & string];
 
 type ValidString<F> =
-  | KrvBuiltin
-  | `|${string}|`
-  | `{${string}}`
-  | ValidatorUsage<F>;
+  KrvBuiltin | `|${string}|` | `{${string}}` | ValidatorUsage<F>;
 
 /** A value spec where every type name exists and every call is well-formed. */
 export type KrvSpecFor<F> =
@@ -251,88 +284,93 @@ type CharOf<K, T> = {
 }[Chars<T>];
 
 /** `"tokens[]&?"` → `"tokens[]"` */
-type StripTransform<K, T> = [CharOf<K, T>] extends [never] ? StripOptional<K>
-  : StripOptional<K> extends `${infer R}${CharOf<K, T>}` ? R
-  : StripOptional<K>;
+type StripTransform<K, T> = [CharOf<K, T>] extends [never]
+  ? StripOptional<K>
+  : StripOptional<K> extends `${infer R}${CharOf<K, T>}`
+    ? R
+    : StripOptional<K>;
 
 /** Name of a table's top-level field: `"tokens[]&?"` → `"tokens"`. */
 export type KrvTopFieldName<K, T> = KrvFieldName<StripTransform<K, T>>;
 
 /** Stored item type: a field whose transform has no `load` reads back as a string. */
-type ItemOutput<K, S, V, T> = [CharOf<K, T>] extends [never] ? KrvSpecType<S, V>
+type ItemOutput<K, S, V, T> = [CharOf<K, T>] extends [never]
+  ? KrvSpecType<S, V>
   : T[CharOf<K, T> & keyof T] extends { load: (stored: never) => unknown }
     ? KrvSpecType<S, V>
-  : string;
+    : string;
 
 type TopField<K, S, V, T> = Wrap<StripTransform<K, T>, ItemOutput<K, S, V, T>>;
-type TopFieldInput<K, S, V, T> = Wrap<
-  StripTransform<K, T>,
-  KrvSpecType<S, V>
->;
+type TopFieldInput<K, S, V, T> = Wrap<StripTransform<K, T>, KrvSpecType<S, V>>;
 
-type Timestamps<TS> = TS extends false ? KrvNoTransforms
+type Timestamps<TS> = TS extends false
+  ? KrvNoTransforms
   : { createdAt: number; updatedAt: number };
 
 /** A table row as read back. `V`: validators, `T`: transforms, `TS`: timestamps. */
 export type KrvTableRow<S, V, T, TS> = Prettify<
-  & {
+  {
     -readonly [
-      K in keyof S as IsOptional<K, S[K], V> extends true ? never
+      K in keyof S as IsOptional<K, S[K], V> extends true
+        ? never
         : KrvTopFieldName<K, T>
     ]-?: TopField<K, S[K], V, T>;
-  }
-  & {
+  } & {
     -readonly [
       K in keyof S as IsOptional<K, S[K], V> extends true
         ? KrvTopFieldName<K, T>
         : never
     ]?: TopField<K, S[K], V, T>;
-  }
-  & Timestamps<TS>
+  } & Timestamps<TS>
 >;
 
 /** What `insert`/`set` accept: plain values; generated fields and timestamps may be left out. */
 export type KrvTableInput<S, V, T, TS> = Prettify<
-  & {
+  {
     -readonly [
-      K in keyof S as IsOptional<K, S[K], V> extends true ? never
-        : IsGenerated<K, S[K]> extends true ? never
-        : KrvTopFieldName<K, T>
+      K in keyof S as IsOptional<K, S[K], V> extends true
+        ? never
+        : IsGenerated<K, S[K]> extends true
+          ? never
+          : KrvTopFieldName<K, T>
     ]-?: TopFieldInput<K, S[K], V, T>;
-  }
-  & {
+  } & {
     -readonly [
       K in keyof S as IsOptional<K, S[K], V> extends true
         ? KrvTopFieldName<K, T>
-        : IsGenerated<K, S[K]> extends true ? KrvTopFieldName<K, T>
-        : never
+        : IsGenerated<K, S[K]> extends true
+          ? KrvTopFieldName<K, T>
+          : never
     ]?: TopFieldInput<K, S[K], V, T>;
-  }
-  & Partial<Timestamps<TS>>
+  } & Partial<Timestamps<TS>>
 >;
 
 /** Nested objects in `where` match partially. */
-type WhereValue<X> = X extends Date | Uint8Array | readonly unknown[] ? X
-  : X extends object ? { [K in keyof X]?: WhereValue<X[K]> }
-  : X;
+type WhereValue<X> = X extends Date | Uint8Array | readonly unknown[]
+  ? X
+  : X extends object
+    ? { [K in keyof X]?: WhereValue<X[K]> }
+    : X;
 
 /**
  * Fields `where` can compare: no transform, a deterministic one, or covered
  * by an index `using` a transform (`Using`).
  */
-type Searchable<K, T, Using> = [CharOf<K, T>] extends [never] ? true
-  : T[CharOf<K, T> & keyof T] extends { deterministic: true } ? true
-  : KrvTopFieldName<K, T> extends Using ? true
-  : false;
+type Searchable<K, T, Using> = [CharOf<K, T>] extends [never]
+  ? true
+  : T[CharOf<K, T> & keyof T] extends { deterministic: true }
+    ? true
+    : KrvTopFieldName<K, T> extends Using
+      ? true
+      : false;
 
 /** `where` of a table: equality on plain values, nested objects match partially. */
 export type KrvTableWhere<S, V, T, TS, Using = never> = Prettify<
-  & {
+  {
     -readonly [
       K in keyof S as Searchable<K, T, Using> extends true
         ? KrvTopFieldName<K, T>
         : never
     ]?: WhereValue<TopFieldInput<K, S[K], V, T>>;
-  }
-  & Partial<Timestamps<TS>>
+  } & Partial<Timestamps<TS>>
 >;

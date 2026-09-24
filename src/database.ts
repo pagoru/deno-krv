@@ -116,9 +116,9 @@ export const createDatabase = <Tables extends KrvTables, E>(
     const entry = pending === "delete" ? null : await state.kv.get(target);
     if (!entry || entry.versionstamp === null) {
       throw new KrvReferenceError(
-        `${table.name}.${reference.field}: ${
-          keyToString(target)
-        } does not exist`,
+        `${table.name}.${reference.field}: ${keyToString(
+          target,
+        )} does not exist`,
       );
     }
     batch.check(target, entry.versionstamp);
@@ -151,15 +151,16 @@ export const createDatabase = <Tables extends KrvTables, E>(
         const taken = await state.kv.get<KrvKey>(unique);
         const owner = taken.value;
         if (
-          owner && !keysEqual(owner, key) &&
+          owner &&
+          !keysEqual(owner, key) &&
           !(oldKey && keysEqual(owner, oldKey)) &&
           batch.pending(owner) !== "delete"
         ) {
           throw new KrvConflictError(
             key,
-            `${table.name}.${index.name}: ${
-              index.fields.join(", ")
-            } already taken by ${keyToString(owner)} (unique)`,
+            `${table.name}.${index.name}: ${index.fields.join(
+              ", ",
+            )} already taken by ${keyToString(owner)} (unique)`,
           );
         }
         batch.check(unique, taken.versionstamp);
@@ -216,9 +217,9 @@ export const createDatabase = <Tables extends KrvTables, E>(
         if (existing.versionstamp !== null) {
           throw new KrvConflictError(
             key,
-            `Can't move ${keyToString(oldKey)} to ${
-              keyToString(key)
-            }: it already exists`,
+            `Can't move ${keyToString(oldKey)} to ${keyToString(
+              key,
+            )}: it already exists`,
           );
         }
         batch.check(key, null);
@@ -332,9 +333,9 @@ export const createDatabase = <Tables extends KrvTables, E>(
         const childKey = entry.key.slice(prefix.length);
         if (!cascade) {
           throw new KrvReferenceError(
-            `Can't delete ${keyToString(key)}: referenced by ${
-              keyToString(childKey)
-            } (${source.name}.${reference.field}). ` +
+            `Can't delete ${keyToString(key)}: referenced by ${keyToString(
+              childKey,
+            )} (${source.name}.${reference.field}). ` +
               `Pass { cascade: true } to delete it too.`,
           );
         }
@@ -378,9 +379,11 @@ export const createDatabase = <Tables extends KrvTables, E>(
 
       // Opaque fields (e.g. hashes) passed back unchanged are kept as stored.
       const keep = new Set(
-        [...table.opaque].filter((field) =>
-          current.value && value[field] !== undefined &&
-          deepEqual(value[field], current.value[field])
+        [...table.opaque].filter(
+          (field) =>
+            current.value &&
+            value[field] !== undefined &&
+            deepEqual(value[field], current.value[field]),
         ),
       );
 
@@ -427,20 +430,20 @@ export const createDatabase = <Tables extends KrvTables, E>(
 
   type Expansion =
     | {
-      name: string;
-      kind: "forward";
-      reference: Reference;
-      target: ParsedTable;
-      nested: Expansion[];
-    }
+        name: string;
+        kind: "forward";
+        reference: Reference;
+        target: ParsedTable;
+        nested: Expansion[];
+      }
     | {
-      name: string;
-      kind: "reverse";
-      reference: Reference;
-      source: ParsedTable;
-      single: boolean;
-      options: Exclude<KrvExpandSpec, string>;
-    };
+        name: string;
+        kind: "reverse";
+        reference: Reference;
+        source: ParsedTable;
+        single: boolean;
+        options: Exclude<KrvExpandSpec, string>;
+      };
 
   /**
    * Resolves `expand` for `table`: `"authorId"` (a reference field of this
@@ -461,8 +464,8 @@ export const createDatabase = <Tables extends KrvTables, E>(
 
       const dot = options.from.lastIndexOf(".");
       if (dot === -1) {
-        const reference = table.references.find((r) =>
-          r.field === options.from
+        const reference = table.references.find(
+          (r) => r.field === options.from,
         );
         if (!reference) {
           throw new Error(
@@ -481,8 +484,8 @@ export const createDatabase = <Tables extends KrvTables, E>(
 
       const source = registry.byName(options.from.slice(0, dot));
       const field = options.from.slice(dot + 1);
-      const reference = source?.references.find((r) =>
-        r.field === field && r.target === table.name
+      const reference = source?.references.find(
+        (r) => r.field === field && r.target === table.name,
       );
       if (!source || !reference) {
         throw new Error(
@@ -490,11 +493,13 @@ export const createDatabase = <Tables extends KrvTables, E>(
         );
       }
       resolveExpand(source, options.expand); // validate nested now
-      const single = table.pattern.length > 0 &&
-        source.pattern.every((part) =>
-          !("placeholder" in part) ||
-          reference.fields[part.placeholder] ===
-            source.bindings[part.placeholder]
+      const single =
+        table.pattern.length > 0 &&
+        source.pattern.every(
+          (part) =>
+            !("placeholder" in part) ||
+            reference.fields[part.placeholder] ===
+              source.bindings[part.placeholder],
         );
       return { name, kind: "reverse", reference, source, single, options };
     });
@@ -530,7 +535,7 @@ export const createDatabase = <Tables extends KrvTables, E>(
         for (const row of rows) {
           const target = registry.targetKey(expansion.reference, row);
           row[expansion.name] = target
-            ? found.get(keyId(target)) ?? null
+            ? (found.get(keyId(target)) ?? null)
             : null;
         }
         continue;
@@ -538,21 +543,23 @@ export const createDatabase = <Tables extends KrvTables, E>(
 
       // Reverse: the referencing rows, through the reference's index.
       const { source, reference, single, options } = expansion;
-      await Promise.all(rows.map(async (row) => {
-        const where: Row = { ...(options.where ?? {}) };
-        for (const [placeholder, field] of Object.entries(reference.fields)) {
-          where[field] = row[table.bindings[placeholder]];
-        }
-        const found = await listRows(source.literals, {
-          where,
-          filter: options.filter as KrvListOptions<Row>["filter"],
-          limit: single ? 1 : options.limit,
-          reverse: options.reverse,
-          consistency,
-          expand: options.expand,
-        });
-        row[expansion.name] = single ? found[0] ?? null : found;
-      }));
+      await Promise.all(
+        rows.map(async (row) => {
+          const where: Row = { ...(options.where ?? {}) };
+          for (const [placeholder, field] of Object.entries(reference.fields)) {
+            where[field] = row[table.bindings[placeholder]];
+          }
+          const found = await listRows(source.literals, {
+            where,
+            filter: options.filter as KrvListOptions<Row>["filter"],
+            limit: single ? 1 : options.limit,
+            reverse: options.reverse,
+            consistency,
+            expand: options.expand,
+          });
+          row[expansion.name] = single ? (found[0] ?? null) : found;
+        }),
+      );
     }
   };
 
@@ -569,12 +576,11 @@ export const createDatabase = <Tables extends KrvTables, E>(
     return { ...entry, value };
   }) as unknown as KrvDatabase<Tables, E>["get"];
 
-  const set =
-    (async (key: KrvKey, value: Row, options: KrvSetOptions = {}) =>
-      (await write(key, value, options)).result) as unknown as KrvDatabase<
-        Tables,
-        E
-      >["set"];
+  const set = (async (key: KrvKey, value: Row, options: KrvSetOptions = {}) =>
+    (await write(key, value, options)).result) as unknown as KrvDatabase<
+    Tables,
+    E
+  >["set"];
 
   const update = (async (
     key: KrvKey,
@@ -588,7 +594,8 @@ export const createDatabase = <Tables extends KrvTables, E>(
       const current = await state.kv.get<Row>(key);
       if (current.versionstamp === null) throw new KrvNotFoundError(key);
       if (
-        options.check !== undefined && current.versionstamp !== options.check
+        options.check !== undefined &&
+        current.versionstamp !== options.check
       ) {
         throw new KrvConflictError(key);
       }
@@ -609,7 +616,8 @@ export const createDatabase = <Tables extends KrvTables, E>(
           error instanceof KrvConflictError &&
           now.versionstamp !== current.versionstamp &&
           options.check === undefined
-        ) continue;
+        )
+          continue;
         throw error;
       }
     }
@@ -744,10 +752,13 @@ export const createDatabase = <Tables extends KrvTables, E>(
     prefix: KrvKey,
     options: KrvListOptions<Row>,
   ) {
-    const entries = state.kv.list<Row>({ prefix }, {
-      reverse: options.reverse,
-      consistency: options.consistency,
-    });
+    const entries = state.kv.list<Row>(
+      { prefix },
+      {
+        reverse: options.reverse,
+        consistency: options.consistency,
+      },
+    );
     for await (const entry of entries) {
       if (entry.key[0] === INTERNAL || !registry.matches(table, entry.key)) {
         continue;
@@ -769,18 +780,22 @@ export const createDatabase = <Tables extends KrvTables, E>(
       return yield* fetchRows([prefix], options.consistency);
     }
 
-    const covered = (await Promise.all(
-      table.indexes.map(async (index) => ({
-        index,
-        values: await registry.whereIndexValues(index, where, plainWhere),
-      })),
-    ))
-      .filter((c): c is { index: ParsedIndex; values: KrvKeyPart[] } =>
-        c.values !== null
+    const covered = (
+      await Promise.all(
+        table.indexes.map(async (index) => ({
+          index,
+          values: await registry.whereIndexValues(index, where, plainWhere),
+        })),
       )
-      .sort((a, b) =>
-        Number(b.index.unique) - Number(a.index.unique) ||
-        b.index.fields.length - a.index.fields.length
+    )
+      .filter(
+        (c): c is { index: ParsedIndex; values: KrvKeyPart[] } =>
+          c.values !== null,
+      )
+      .sort(
+        (a, b) =>
+          Number(b.index.unique) - Number(a.index.unique) ||
+          b.index.fields.length - a.index.fields.length,
       );
     const best = covered[0];
     if (best?.index.unique) {
@@ -826,7 +841,8 @@ export const createDatabase = <Tables extends KrvTables, E>(
     for (const field of Object.keys(plainWhere)) {
       const t = table.transformed.find((t) => t.field === field);
       if (
-        t && !t.transform.deterministic &&
+        t &&
+        !t.transform.deterministic &&
         !registry.searchableByIndex(table, field)
       ) {
         throw new Error(
@@ -870,14 +886,16 @@ export const createDatabase = <Tables extends KrvTables, E>(
         // Re-check every condition: also guards against a stale index read.
         if (
           !Object.entries(stored).every(([f, v]) =>
-            matchesWhere(entry.value[f], v)
+            matchesWhere(entry.value[f], v),
           )
-        ) continue;
+        )
+          continue;
 
         const value = await loadRow(table, entry.value);
         if (
           !Object.entries(loaded).every(([f, v]) => matchesWhere(value[f], v))
-        ) continue;
+        )
+          continue;
         if (opts.filter && !opts.filter(value)) continue;
         count++;
         batch.push({ entry, value });
@@ -901,10 +919,12 @@ export const createDatabase = <Tables extends KrvTables, E>(
     options: KrvListOptions<Row> & { expand?: Record<string, KrvExpandSpec> },
   ) =>
     Array.fromAsync(
-      (list as unknown as (
-        literals: KrvKey,
-        options: KrvListOptions<Row>,
-      ) => AsyncIterable<Row>)(literals, options),
+      (
+        list as unknown as (
+          literals: KrvKey,
+          options: KrvListOptions<Row>,
+        ) => AsyncIterable<Row>
+      )(literals, options),
     );
 
   const find = (async (
@@ -912,10 +932,12 @@ export const createDatabase = <Tables extends KrvTables, E>(
     options: Omit<KrvListOptions<Row>, "limit"> = {},
   ) => {
     // Plain list call: validates the table and `where` right away.
-    const rows = (list as unknown as (
-      literals: KrvKey,
-      options: KrvListOptions<Row>,
-    ) => AsyncIterable<unknown>)(literals, { ...options, limit: 1 });
+    const rows = (
+      list as unknown as (
+        literals: KrvKey,
+        options: KrvListOptions<Row>,
+      ) => AsyncIterable<unknown>
+    )(literals, { ...options, limit: 1 });
     for await (const row of rows) return row;
     return null;
   }) as unknown as KrvDatabase<Tables, E>["find"];

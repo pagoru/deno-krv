@@ -57,20 +57,23 @@ type Replaced = Date | Uint8Array | readonly unknown[];
  * arrays and maps are replaced whole. `undefined` removes a field.
  */
 export type KrvPatch<T> = {
-  [K in keyof T]?: T[K] extends Replaced ? T[K] | undefined
-    : T[K] extends object ? string extends keyof T[K] ? T[K] | undefined // a map: replaced
-      : KrvPatch<T[K]> | undefined
-    : T[K] | undefined;
+  [K in keyof T]?: T[K] extends Replaced
+    ? T[K] | undefined
+    : T[K] extends object
+      ? string extends keyof T[K]
+        ? T[K] | undefined // a map: replaced
+        : KrvPatch<T[K]> | undefined
+      : T[K] | undefined;
 };
 
 /** Runtime shape of an `expand` entry (typed per table by `KrvExpand`). */
 export type KrvExpandSpec =
   | string
   | {
-    from: string;
-    where?: Record<string, unknown>;
-    filter?: (row: never) => boolean;
-    limit?: number;
-    reverse?: boolean;
-    expand?: Record<string, KrvExpandSpec>;
-  };
+      from: string;
+      where?: Record<string, unknown>;
+      filter?: (row: never) => boolean;
+      limit?: number;
+      reverse?: boolean;
+      expand?: Record<string, KrvExpandSpec>;
+    };

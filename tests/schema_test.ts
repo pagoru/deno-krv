@@ -83,7 +83,7 @@ const valid = () => ({
   level: 2 as const,
   ref: "r",
   maybe: null,
-  "tags": ["a"],
+  tags: ["a"],
   scores: { a: 1 },
   groups: [{ a: "x" }],
   matrix: [[1, 2], [3]],
@@ -117,17 +117,23 @@ Deno.test("schema: a valid row is stored with generated fields", async () => {
   db.close();
 });
 
-Deno.test("schema: optional fields may be left out, required ones may not", async () => {
-  const db = await open();
-  // note?, views (union with undefined), labels[]? and meta.score? are optional.
-  assertEquals(await issuesOf(db, {}), []);
-  assertEquals(await issuesOf(db, { note: "n", views: 3, labels: ["x"] }), []);
+Deno.test(
+  "schema: optional fields may be left out, required ones may not",
+  async () => {
+    const db = await open();
+    // note?, views (union with undefined), labels[]? and meta.score? are optional.
+    assertEquals(await issuesOf(db, {}), []);
+    assertEquals(
+      await issuesOf(db, { note: "n", views: 3, labels: ["x"] }),
+      [],
+    );
 
-  assertEquals(await issuesOf(db, { text: undefined }), [
-    "items.text: required",
-  ]);
-  db.close();
-});
+    assertEquals(await issuesOf(db, { text: undefined }), [
+      "items.text: required",
+    ]);
+    db.close();
+  },
+);
 
 Deno.test("schema: types, literals and unions", async () => {
   const db = await open();
@@ -222,67 +228,73 @@ Deno.test("schema: every issue is reported at once", async () => {
   db.close();
 });
 
-Deno.test("schema: invalid schemas are rejected at open with KrvSchemaError", async () => {
-  const cases: [Record<string, unknown>, string][] = [
-    [{ mail: "emial" }, 'unknown type "emial"'],
-    [{ s: "|draft" }, 'unknown type "|draft"'],
-    [{ name: "str(3)" }, '"str" takes 2 argument(s) (min, max), got 1'],
-    [{ name: "str(a, 5)" }, 'invalid argument "a"'],
-    [{ "tags?[]": "string" }, 'invalid field name "tags?[]"'],
-    [{ a: "string", "a?": "string" }, 'field "a" is declared twice'],
-    [{ m: { u: "{x.id}" } }, "only allowed as a plain top-level field"],
-    [{ "u[]": "{t.id}" }, "key fields and references can't be arrays"],
-    [
-      { u: ["{t.id}", "string"] },
-      "can only be combined with null or undefined",
-    ],
-    [{ "x!": "string" }, 'unknown transform "!"'],
-    [{ m: { "x!": "string" } }, "only allowed on a table's top-level fields"],
-    [{ createdAt: "number" }, "added automatically"],
-    [{ u: [] }, "a union needs at least one option"],
-  ];
+Deno.test(
+  "schema: invalid schemas are rejected at open with KrvSchemaError",
+  async () => {
+    const cases: [Record<string, unknown>, string][] = [
+      [{ mail: "emial" }, 'unknown type "emial"'],
+      [{ s: "|draft" }, 'unknown type "|draft"'],
+      [{ name: "str(3)" }, '"str" takes 2 argument(s) (min, max), got 1'],
+      [{ name: "str(a, 5)" }, 'invalid argument "a"'],
+      [{ "tags?[]": "string" }, 'invalid field name "tags?[]"'],
+      [{ a: "string", "a?": "string" }, 'field "a" is declared twice'],
+      [{ m: { u: "{x.id}" } }, "only allowed as a plain top-level field"],
+      [{ "u[]": "{t.id}" }, "key fields and references can't be arrays"],
+      [
+        { u: ["{t.id}", "string"] },
+        "can only be combined with null or undefined",
+      ],
+      [{ "x!": "string" }, 'unknown transform "!"'],
+      [{ m: { "x!": "string" } }, "only allowed on a table's top-level fields"],
+      [{ createdAt: "number" }, "added automatically"],
+      [{ u: [] }, "a union needs at least one option"],
+    ];
 
-  for (const [schema, message] of cases) {
-    await assertRejects(
-      () =>
-        openKRV({
-          path: ":memory:",
-          validators: validators as never,
-          tables: [
-            table({ key: ["t", "{id}"], schema: { id: "{id}", ...schema } }),
-          ] as never,
-        }),
-      KrvSchemaError,
-      message,
-    );
-  }
-});
+    for (const [schema, message] of cases) {
+      await assertRejects(
+        () =>
+          openKRV({
+            path: ":memory:",
+            validators: validators as never,
+            tables: [
+              table({ key: ["t", "{id}"], schema: { id: "{id}", ...schema } }),
+            ] as never,
+          }),
+        KrvSchemaError,
+        message,
+      );
+    }
+  },
+);
 
-Deno.test("schema: invalid validator declarations are rejected at open", async () => {
-  const cases: [Record<string, unknown>, string][] = [
-    [{ string: ["string", () => true] }, '"string" is a built-in type'],
-    [
-      { "bad name": ["string", () => true] },
-      'must be "name" or "name(param, ...)"',
-    ],
-    [{ "f(1x)": ["string", () => true] }, 'invalid parameter "1x"'],
-    [{ f: ["string"] }, "must be [baseType, (value) => boolean]"],
-    [{ f: ["nope", () => true] }, 'unknown type "nope"'],
-  ];
+Deno.test(
+  "schema: invalid validator declarations are rejected at open",
+  async () => {
+    const cases: [Record<string, unknown>, string][] = [
+      [{ string: ["string", () => true] }, '"string" is a built-in type'],
+      [
+        { "bad name": ["string", () => true] },
+        'must be "name" or "name(param, ...)"',
+      ],
+      [{ "f(1x)": ["string", () => true] }, 'invalid parameter "1x"'],
+      [{ f: ["string"] }, "must be [baseType, (value) => boolean]"],
+      [{ f: ["nope", () => true] }, 'unknown type "nope"'],
+    ];
 
-  for (const [defs, message] of cases) {
-    await assertRejects(
-      () =>
-        openKRV({
-          path: ":memory:",
-          validators: defs as never,
-          tables: [],
-        }),
-      KrvSchemaError,
-      message,
-    );
-  }
-});
+    for (const [defs, message] of cases) {
+      await assertRejects(
+        () =>
+          openKRV({
+            path: ":memory:",
+            validators: defs as never,
+            tables: [],
+          }),
+        KrvSchemaError,
+        message,
+      );
+    }
+  },
+);
 
 Deno.test("schema: typos are compile errors", () => {
   // Only type-checked, never run.
@@ -372,11 +384,13 @@ Deno.test("schema: inferred row types", async () => {
     matrix: number[][];
     meta: { source: string; score?: number };
     files: { url: string; size: number }[];
-    shape: { type: "circle"; r: number } | {
-      type: "rect";
-      w: number;
-      h: number;
-    };
+    shape:
+      | { type: "circle"; r: number }
+      | {
+          type: "rect";
+          w: number;
+          h: number;
+        };
     mail: string;
     name: string;
     kind: string;

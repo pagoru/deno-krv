@@ -35,7 +35,7 @@ await db.insert(["users"], { username: "pagoru1" });
 await db.insert(["posts"], {
   title: "This is a title",
   userId,
-  lang: 'en'
+  lang: "en",
 });
 await db.insert(["posts"], {
   id: "test",
@@ -43,7 +43,9 @@ await db.insert(["posts"], {
   title: "This is a title 2",
   userId,
 });
-console.log(await db.list(["posts"], { expand: { user: "userId" }, values: false }));
+console.log(
+  await db.list(["posts"], { expand: { user: "userId" }, values: false }),
+);
 // console.log(
 //   await db.list(["users"], {
 //     expand: {

@@ -132,19 +132,22 @@ const tempPath = async () => `${await Deno.makeTempDir()}/db`;
 
 // ---- Timestamps ----
 
-Deno.test("timestamps: insert sets both, set keeps createdAt and bumps updatedAt", async () => {
-  const db = await open();
-  const before = Date.now();
-  const { key, value } = await account(db, "a@x.dev");
-  assert(value.createdAt >= before && value.createdAt === value.updatedAt);
+Deno.test(
+  "timestamps: insert sets both, set keeps createdAt and bumps updatedAt",
+  async () => {
+    const db = await open();
+    const before = Date.now();
+    const { key, value } = await account(db, "a@x.dev");
+    assert(value.createdAt >= before && value.createdAt === value.updatedAt);
 
-  await new Promise((r) => setTimeout(r, 5));
-  await db.set(key, { ...value, verified: false }); // spread: old updatedAt
-  const updated = (await db.get(key)).value!;
-  assertEquals(updated.createdAt, value.createdAt);
-  assert(updated.updatedAt > value.updatedAt);
-  db.close();
-});
+    await new Promise((r) => setTimeout(r, 5));
+    await db.set(key, { ...value, verified: false }); // spread: old updatedAt
+    const updated = (await db.get(key)).value!;
+    assertEquals(updated.createdAt, value.createdAt);
+    assert(updated.updatedAt > value.updatedAt);
+    db.close();
+  },
+);
 
 Deno.test("timestamps: can be set explicitly, on insert and set", async () => {
   const db = await open();
@@ -174,26 +177,29 @@ Deno.test("timestamps: timestamps: false leaves them out", async () => {
 
 // ---- Transforms ----
 
-Deno.test("transforms: stored values are transformed, reads load them back", async () => {
-  const path = await tempPath();
-  const db = await open(path);
-  const { key, value } = await account(db, "a@x.dev");
-  db.close();
+Deno.test(
+  "transforms: stored values are transformed, reads load them back",
+  async () => {
+    const path = await tempPath();
+    const db = await open(path);
+    const { key, value } = await account(db, "a@x.dev");
+    db.close();
 
-  const stored = (await raw(path, key))!;
-  assertEquals((stored.emailHash as string).length, 64); // sha256 hex
-  assert((stored.email as string).startsWith("enc:"));
-  assert((stored.password as string).startsWith("$fake$"));
+    const stored = (await raw(path, key))!;
+    assertEquals((stored.emailHash as string).length, 64); // sha256 hex
+    assert((stored.email as string).startsWith("enc:"));
+    assert((stored.password as string).startsWith("$fake$"));
 
-  const reopened = await open(path);
-  const read = (await reopened.get(key)).value!;
-  assertEquals(read.email, "a@x.dev"); // "&" has load: decrypted
-  assertEquals(read.emailHash, stored.emailHash); // "#" has no load: the hash
-  assertEquals(read.password, stored.password); // "*" has no load: the hash
-  assertEquals(value.email, "a@x.dev");
-  assertEquals(value.password, stored.password);
-  reopened.close();
-});
+    const reopened = await open(path);
+    const read = (await reopened.get(key)).value!;
+    assertEquals(read.email, "a@x.dev"); // "&" has load: decrypted
+    assertEquals(read.emailHash, stored.emailHash); // "#" has no load: the hash
+    assertEquals(read.password, stored.password); // "*" has no load: the hash
+    assertEquals(value.email, "a@x.dev");
+    assertEquals(value.password, stored.password);
+    reopened.close();
+  },
+);
 
 Deno.test("transforms: arrays are transformed item by item", async () => {
   const path = await tempPath();
@@ -228,18 +234,21 @@ Deno.test("transforms: validation runs on the plain value", async () => {
   db.close();
 });
 
-Deno.test("transforms: an opaque value passed back unchanged isn't hashed again", async () => {
-  const db = await open();
-  const { key, value } = await account(db, "a@x.dev");
-  await db.set(key, { ...value, verified: false });
+Deno.test(
+  "transforms: an opaque value passed back unchanged isn't hashed again",
+  async () => {
+    const db = await open();
+    const { key, value } = await account(db, "a@x.dev");
+    await db.set(key, { ...value, verified: false });
 
-  assert(await db.compare(key, "password", "a@x.dev-password"));
-  assertEquals((await db.get(key)).value!.emailHash, value.emailHash);
-  // A new password is hashed.
-  await db.set(key, { ...value, password: "new-password" });
-  assert(await db.compare(key, "password", "new-password"));
-  db.close();
-});
+    assert(await db.compare(key, "password", "a@x.dev-password"));
+    assertEquals((await db.get(key)).value!.emailHash, value.emailHash);
+    // A new password is hashed.
+    await db.set(key, { ...value, password: "new-password" });
+    assert(await db.compare(key, "password", "new-password"));
+    db.close();
+  },
+);
 
 Deno.test("transforms: compare", async () => {
   const db = await open();
@@ -258,69 +267,80 @@ Deno.test("transforms: compare", async () => {
   db.close();
 });
 
-Deno.test("transforms: where hashes the value first; non-deterministic fields can't be searched", async () => {
-  const db = await open();
-  await account(db, "a@x.dev");
-  await account(db, "b@x.dev");
+Deno.test(
+  "transforms: where hashes the value first; non-deterministic fields can't be searched",
+  async () => {
+    const db = await open();
+    await account(db, "a@x.dev");
+    await account(db, "b@x.dev");
 
-  const [found] = await db.list(["accounts"], {
-    where: { emailHash: "b@x.dev" },
-  });
-  assertEquals(found.email, "b@x.dev");
+    const [found] = await db.list(["accounts"], {
+      where: { emailHash: "b@x.dev" },
+    });
+    assertEquals(found.email, "b@x.dev");
 
-  assertThrows(
-    // @ts-expect-error "&" isn't deterministic
-    () => db.list(["accounts"], { where: { email: "a@x.dev" } }),
-    Error,
-    "isn't deterministic",
-  );
-  assertThrows(
-    // @ts-expect-error "*" isn't deterministic
-    () => db.list(["accounts"], { where: { password: "x" } }),
-    Error,
-    "isn't deterministic",
-  );
-  db.close();
-});
+    assertThrows(
+      // @ts-expect-error "&" isn't deterministic
+      () => db.list(["accounts"], { where: { email: "a@x.dev" } }),
+      Error,
+      "isn't deterministic",
+    );
+    assertThrows(
+      // @ts-expect-error "*" isn't deterministic
+      () => db.list(["accounts"], { where: { password: "x" } }),
+      Error,
+      "isn't deterministic",
+    );
+    db.close();
+  },
+);
 
 // ---- Indexes ----
 
-Deno.test("indexes: unique values are enforced on insert and update", async () => {
-  const db = await open();
-  const a = await account(db, "a@x.dev", { username: "alice" });
-  const b = await account(db, "b@x.dev");
+Deno.test(
+  "indexes: unique values are enforced on insert and update",
+  async () => {
+    const db = await open();
+    const a = await account(db, "a@x.dev", { username: "alice" });
+    const b = await account(db, "b@x.dev");
 
-  await assertRejects(
-    () => account(db, "a@x.dev"),
-    KrvConflictError,
-    "byEmail",
-  );
-  await assertRejects(
-    () => db.set(b.key, { ...b.value, username: "alice" }),
-    KrvConflictError,
-    "already taken by accounts/",
-  );
-  // Rows without a username aren't indexed, so any number of them is fine.
-  await account(db, "c@x.dev");
+    await assertRejects(
+      () => account(db, "a@x.dev"),
+      KrvConflictError,
+      "byEmail",
+    );
+    await assertRejects(
+      () => db.set(b.key, { ...b.value, username: "alice" }),
+      KrvConflictError,
+      "already taken by accounts/",
+    );
+    // Rows without a username aren't indexed, so any number of them is fine.
+    await account(db, "c@x.dev");
 
-  // Freed values can be taken again.
-  await db.set(a.key, { ...a.value, username: "alice2" });
-  await db.set(b.key, { ...b.value, username: "alice" });
-  await db.delete(a.key);
-  await account(db, "a@x.dev");
-  db.close();
-});
+    // Freed values can be taken again.
+    await db.set(a.key, { ...a.value, username: "alice2" });
+    await db.set(b.key, { ...b.value, username: "alice" });
+    await db.delete(a.key);
+    await account(db, "a@x.dev");
+    db.close();
+  },
+);
 
-Deno.test("indexes: concurrent inserts of the same unique value, one wins", async () => {
-  const db = await open();
-  const results = await settle(
-    Array.from({ length: 20 }, () => account(db, "same@x.dev")),
-  );
-  assertEquals(fulfilled(results).length, 1);
-  assert(rejected(results).every((r) => r.reason instanceof KrvConflictError));
-  assertEquals((await db.list(["accounts"])).length, 1);
-  db.close();
-});
+Deno.test(
+  "indexes: concurrent inserts of the same unique value, one wins",
+  async () => {
+    const db = await open();
+    const results = await settle(
+      Array.from({ length: 20 }, () => account(db, "same@x.dev")),
+    );
+    assertEquals(fulfilled(results).length, 1);
+    assert(
+      rejected(results).every((r) => r.reason instanceof KrvConflictError),
+    );
+    assertEquals((await db.list(["accounts"])).length, 1);
+    db.close();
+  },
+);
 
 Deno.test("indexes: where uses them, and they follow updates", async () => {
   const db = await open();
@@ -385,53 +405,68 @@ Deno.test("where: nested objects match partially", async () => {
   const app = await db.list(["transactions"], {
     where: { meta: { source: "app" } },
   });
-  assertEquals(app.map((t) => t.meta), [{ source: "app", note: "x" }]);
+  assertEquals(
+    app.map((t) => t.meta),
+    [{ source: "app", note: "x" }],
+  );
   db.close();
 });
 
-Deno.test("filter: any condition, typed, after where and before limit", async () => {
-  const db = await open();
-  const a = await account(db, "a@x.dev");
-  for (const amount of [100, 700, 800, 50, 900]) {
-    await transaction(db, a.value.id, { amount });
-  }
+Deno.test(
+  "filter: any condition, typed, after where and before limit",
+  async () => {
+    const db = await open();
+    const a = await account(db, "a@x.dev");
+    for (const amount of [100, 700, 800, 50, 900]) {
+      await transaction(db, a.value.id, { amount });
+    }
 
-  const big = await db.list(["transactions"], {
-    where: { accountId: a.value.id },
-    filter: (t) => t.amount > 500 && t.tags.includes("gift"),
-    limit: 2,
-  });
-  assertEquals(big.map((t) => t.amount), [700, 800]);
-  db.close();
-});
+    const big = await db.list(["transactions"], {
+      where: { accountId: a.value.id },
+      filter: (t) => t.amount > 500 && t.tags.includes("gift"),
+      limit: 2,
+    });
+    assertEquals(
+      big.map((t) => t.amount),
+      [700, 800],
+    );
+    db.close();
+  },
+);
 
 // ---- Nullable references ----
 
-Deno.test("references: a nullable reference may be null, and is enforced otherwise", async () => {
-  const db = await open();
-  const gift = await transaction(db, null);
-  assertEquals(gift.value.accountId, null);
+Deno.test(
+  "references: a nullable reference may be null, and is enforced otherwise",
+  async () => {
+    const db = await open();
+    const gift = await transaction(db, null);
+    assertEquals(gift.value.accountId, null);
 
-  await assertRejects(() => transaction(db, "ghost"), KrvReferenceError);
+    await assertRejects(() => transaction(db, "ghost"), KrvReferenceError);
 
-  const a = await account(db, "a@x.dev");
-  await transaction(db, a.value.id);
-  await assertRejects(() => db.delete(a.key), KrvReferenceError);
-  await db.delete(a.key, { cascade: true });
-  assertEquals((await db.list(["transactions"])).length, 1); // the null one
-  db.close();
-});
+    const a = await account(db, "a@x.dev");
+    await transaction(db, a.value.id);
+    await assertRejects(() => db.delete(a.key), KrvReferenceError);
+    await db.delete(a.key, { cascade: true });
+    assertEquals((await db.list(["transactions"])).length, 1); // the null one
+    db.close();
+  },
+);
 
-Deno.test("references: 1:1 table keyed by the reference, cascades", async () => {
-  const db = await open();
-  const a = await account(db, "a@x.dev");
-  await db.insert(["admins"], { accountId: a.value.id });
-  assertNotEquals((await db.get(["admins", a.value.id])).value, null);
+Deno.test(
+  "references: 1:1 table keyed by the reference, cascades",
+  async () => {
+    const db = await open();
+    const a = await account(db, "a@x.dev");
+    await db.insert(["admins"], { accountId: a.value.id });
+    assertNotEquals((await db.get(["admins", a.value.id])).value, null);
 
-  await db.delete(a.key, { cascade: true });
-  assertEquals((await db.get(["admins", a.value.id])).value, null);
-  db.close();
-});
+    await db.delete(a.key, { cascade: true });
+    assertEquals((await db.get(["admins", a.value.id])).value, null);
+    db.close();
+  },
+);
 
 // ---- Indexes using a transform (blind indexes) ----
 
@@ -449,89 +484,101 @@ const members = [
 const openMembers = (path = ":memory:") =>
   openKRV({ path, transforms, tables: members });
 
-Deno.test("using: where on an encrypted field goes through its hashed index", async () => {
-  const path = await tempPath();
-  const db = await openMembers(path);
-  const a = await db.insert(["members"], { club: "chess", phone: "+34600" });
-  await db.insert(["members"], { club: "chess", phone: "+34611" });
+Deno.test(
+  "using: where on an encrypted field goes through its hashed index",
+  async () => {
+    const path = await tempPath();
+    const db = await openMembers(path);
+    const a = await db.insert(["members"], { club: "chess", phone: "+34600" });
+    await db.insert(["members"], { club: "chess", phone: "+34611" });
 
-  const [found] = await db.list(["members"], { where: { phone: "+34600" } });
-  assertEquals(found.id, a.value.id);
-  assertEquals(found.phone, "+34600");
-  assertEquals(
-    (await db.list(["members"], { where: { club: "chess", phone: "+34611" } }))
-      .length,
-    1,
-  );
-  db.close();
+    const [found] = await db.list(["members"], { where: { phone: "+34600" } });
+    assertEquals(found.id, a.value.id);
+    assertEquals(found.phone, "+34600");
+    assertEquals(
+      (
+        await db.list(["members"], {
+          where: { club: "chess", phone: "+34611" },
+        })
+      ).length,
+      1,
+    );
+    db.close();
 
-  // Stored encrypted; the index is keyed by the hash of the plain value.
-  const kv = await Deno.openKv(path);
-  const stored = (await kv.get<{ phone: string }>(a.key)).value!;
-  assert(stored.phone.startsWith("enc:"));
-  const unique = await kv.get([
-    "__krv",
-    "uniq",
-    "members",
-    "byPhone",
-    await transforms["#"].save("+34600"),
-  ]);
-  assertEquals(unique.value, a.key);
-  kv.close();
-});
+    // Stored encrypted; the index is keyed by the hash of the plain value.
+    const kv = await Deno.openKv(path);
+    const stored = (await kv.get<{ phone: string }>(a.key)).value!;
+    assert(stored.phone.startsWith("enc:"));
+    const unique = await kv.get([
+      "__krv",
+      "uniq",
+      "members",
+      "byPhone",
+      await transforms["#"].save("+34600"),
+    ]);
+    assertEquals(unique.value, a.key);
+    kv.close();
+  },
+);
 
-Deno.test("using: unique, updates and deletes follow the plain value", async () => {
-  const db = await openMembers();
-  const a = await db.insert(["members"], { club: "go", phone: "+1" });
+Deno.test(
+  "using: unique, updates and deletes follow the plain value",
+  async () => {
+    const db = await openMembers();
+    const a = await db.insert(["members"], { club: "go", phone: "+1" });
 
-  await assertRejects(
-    () => db.insert(["members"], { club: "go", phone: "+1" }),
-    KrvConflictError,
-    "byPhone",
-  );
+    await assertRejects(
+      () => db.insert(["members"], { club: "go", phone: "+1" }),
+      KrvConflictError,
+      "byPhone",
+    );
 
-  await db.set(a.key, { ...a.value, phone: "+2" });
-  assertEquals(
-    (await db.list(["members"], { where: { phone: "+1" } })).length,
-    0,
-  );
-  assertEquals(
-    (await db.list(["members"], { where: { phone: "+2" } })).length,
-    1,
-  );
+    await db.set(a.key, { ...a.value, phone: "+2" });
+    assertEquals(
+      (await db.list(["members"], { where: { phone: "+1" } })).length,
+      0,
+    );
+    assertEquals(
+      (await db.list(["members"], { where: { phone: "+2" } })).length,
+      1,
+    );
 
-  // Written back unchanged (decrypted value in a spread): index untouched.
-  const current = (await db.get(a.key)).value!;
-  await db.set(a.key, { ...current, club: "chess" });
-  assertEquals(
-    (await db.list(["members"], { where: { phone: "+2" } })).length,
-    1,
-  );
+    // Written back unchanged (decrypted value in a spread): index untouched.
+    const current = (await db.get(a.key)).value!;
+    await db.set(a.key, { ...current, club: "chess" });
+    assertEquals(
+      (await db.list(["members"], { where: { phone: "+2" } })).length,
+      1,
+    );
 
-  await db.delete(a.key);
-  await db.insert(["members"], { club: "go", phone: "+2" }); // freed
-  db.close();
-});
+    await db.delete(a.key);
+    await db.insert(["members"], { club: "go", phone: "+2" }); // freed
+    db.close();
+  },
+);
 
-Deno.test("using: an encrypted field without such an index can't be searched", async () => {
-  const db = await openKRV({
-    path: ":memory:",
-    transforms,
-    tables: [
-      table({
-        key: ["notes", "{noteId}"],
-        schema: { id: "{noteId}", "secret&": "string" },
-      }),
-    ],
-  });
-  assertThrows(
-    // @ts-expect-error no index using a deterministic transform
-    () => db.list(["notes"], { where: { secret: "x" } }),
-    Error,
-    'using: "#"',
-  );
-  db.close();
-});
+Deno.test(
+  "using: an encrypted field without such an index can't be searched",
+  async () => {
+    const db = await openKRV({
+      path: ":memory:",
+      transforms,
+      tables: [
+        table({
+          key: ["notes", "{noteId}"],
+          schema: { id: "{noteId}", "secret&": "string" },
+        }),
+      ],
+    });
+    assertThrows(
+      // @ts-expect-error no index using a deterministic transform
+      () => db.list(["notes"], { where: { secret: "x" } }),
+      Error,
+      'using: "#"',
+    );
+    db.close();
+  },
+);
 
 Deno.test("using: invalid definitions are rejected at open", async () => {
   const cases: [Record<string, unknown>, string][] = [
@@ -566,51 +613,59 @@ Deno.test("using: invalid definitions are rejected at open", async () => {
   }
 });
 
-Deno.test("using: added later, the index is built from existing encrypted rows", async () => {
-  const path = await tempPath();
-  const plainTables = [
-    table({
-      key: ["members", "{memberId}"],
-      schema: { id: "{memberId}", club: "string", "phone&": "string" },
-    }),
-  ];
-  const v1 = await openKRV({ path, transforms, tables: plainTables });
-  const a = await v1.insert(["members"], { club: "go", phone: "+9" });
-  v1.close();
+Deno.test(
+  "using: added later, the index is built from existing encrypted rows",
+  async () => {
+    const path = await tempPath();
+    const plainTables = [
+      table({
+        key: ["members", "{memberId}"],
+        schema: { id: "{memberId}", club: "string", "phone&": "string" },
+      }),
+    ];
+    const v1 = await openKRV({ path, transforms, tables: plainTables });
+    const a = await v1.insert(["members"], { club: "go", phone: "+9" });
+    v1.close();
 
-  const v2 = await openMembers(path);
-  const [found] = await v2.list(["members"], { where: { phone: "+9" } });
-  assertEquals(found.id, a.value.id);
-  v2.close();
-});
+    const v2 = await openMembers(path);
+    const [found] = await v2.list(["members"], { where: { phone: "+9" } });
+    assertEquals(found.id, a.value.id);
+    v2.close();
+  },
+);
 
 // ---- list values ----
 
-Deno.test("list: returns just the rows, or entries with values: false", async () => {
-  const db = await open();
-  await account(db, "a@x.dev", { username: "alice" });
-  await account(db, "b@x.dev");
+Deno.test(
+  "list: returns just the rows, or entries with values: false",
+  async () => {
+    const db = await open();
+    await account(db, "a@x.dev", { username: "alice" });
+    await account(db, "b@x.dev");
 
-  const rows = await db.list(["accounts"]);
-  assertEquals(rows.map((a) => a.email), ["a@x.dev", "b@x.dev"]);
-  assert(!("key" in rows[0]));
+    const rows = await db.list(["accounts"]);
+    assertEquals(
+      rows.map((a) => a.email),
+      ["a@x.dev", "b@x.dev"],
+    );
+    assert(!("key" in rows[0]));
 
-  // Typed as rows, and works with where, filter and streaming.
-  const names: (string | undefined)[] = [];
-  for await (
-    const a of db.list(["accounts"], {
+    // Typed as rows, and works with where, filter and streaming.
+    const names: (string | undefined)[] = [];
+    for await (const a of db.list(["accounts"], {
       filter: (a) => a.verified,
       where: { emailHash: "a@x.dev" },
-    })
-  ) names.push(a.username);
-  assertEquals(names, ["alice"]);
+    }))
+      names.push(a.username);
+    assertEquals(names, ["alice"]);
 
-  // values: false: entries, with key and versionstamp.
-  const [entry] = await db.list(["accounts"], { limit: 1, values: false });
-  assertEquals(entry.key[0], "accounts");
-  assertEquals(entry.value.email, "a@x.dev");
-  db.close();
-});
+    // values: false: entries, with key and versionstamp.
+    const [entry] = await db.list(["accounts"], { limit: 1, values: false });
+    assertEquals(entry.key[0], "accounts");
+    assertEquals(entry.value.email, "a@x.dev");
+    db.close();
+  },
+);
 
 Deno.test("find: the first matching row, or null", async () => {
   const db = await open();
@@ -648,24 +703,27 @@ Deno.test("find: the first matching row, or null", async () => {
 
 // ---- update ----
 
-Deno.test("update: merges nested objects, replaces arrays and maps", async () => {
-  const db = await open();
-  const a = await account(db, "a@x.dev");
-  const t = await transaction(db, a.value.id, {
-    meta: { source: "web", note: "x" },
-    tags: ["a", "b"],
-  });
+Deno.test(
+  "update: merges nested objects, replaces arrays and maps",
+  async () => {
+    const db = await open();
+    const a = await account(db, "a@x.dev");
+    const t = await transaction(db, a.value.id, {
+      meta: { source: "web", note: "x" },
+      tags: ["a", "b"],
+    });
 
-  const updated = await db.update(t.key, {
-    meta: { note: "y" },
-    tags: ["c"],
-  });
-  assertEquals(updated.meta, { source: "web", note: "y" }); // merged
-  assertEquals(updated.tags, ["c"]); // replaced
-  assert(updated.updatedAt >= t.value.updatedAt);
-  assertEquals((await db.get(t.key)).value!.meta.note, "y");
-  db.close();
-});
+    const updated = await db.update(t.key, {
+      meta: { note: "y" },
+      tags: ["c"],
+    });
+    assertEquals(updated.meta, { source: "web", note: "y" }); // merged
+    assertEquals(updated.tags, ["c"]); // replaced
+    assert(updated.updatedAt >= t.value.updatedAt);
+    assertEquals((await db.get(t.key)).value!.meta.note, "y");
+    db.close();
+  },
+);
 
 Deno.test("update: undefined removes a field", async () => {
   const db = await open();
@@ -684,46 +742,54 @@ Deno.test("update: undefined removes a field", async () => {
   db.close();
 });
 
-Deno.test("update: keeps hashes, updates indexes, returns the row", async () => {
-  const db = await open();
-  const a = await account(db, "a@x.dev");
+Deno.test(
+  "update: keeps hashes, updates indexes, returns the row",
+  async () => {
+    const db = await open();
+    const a = await account(db, "a@x.dev");
 
-  const updated = await db.update(a.key, { verified: false });
-  assertEquals(updated.verified, false);
-  assertEquals(updated.email, "a@x.dev"); // decrypted
-  assert(await db.compare(a.key, "password", "a@x.dev-password")); // not re-hashed
-  db.close();
-});
+    const updated = await db.update(a.key, { verified: false });
+    assertEquals(updated.verified, false);
+    assertEquals(updated.email, "a@x.dev"); // decrypted
+    assert(await db.compare(a.key, "password", "a@x.dev-password")); // not re-hashed
+    db.close();
+  },
+);
 
-Deno.test("update: a function patch never loses concurrent updates", async () => {
-  const db = await open();
-  const a = await account(db, "a@x.dev");
-  const t = await transaction(db, a.value.id, { amount: 1 });
+Deno.test(
+  "update: a function patch never loses concurrent updates",
+  async () => {
+    const db = await open();
+    const a = await account(db, "a@x.dev");
+    const t = await transaction(db, a.value.id, { amount: 1 });
 
-  await Promise.all(
-    Array.from(
-      { length: 30 },
-      () => db.update(t.key, (tx) => ({ amount: tx.amount + 1 })),
-    ),
-  );
-  assertEquals((await db.get(t.key)).value!.amount, 31);
-  db.close();
-});
+    await Promise.all(
+      Array.from({ length: 30 }, () =>
+        db.update(t.key, (tx) => ({ amount: tx.amount + 1 })),
+      ),
+    );
+    assertEquals((await db.get(t.key)).value!.amount, 31);
+    db.close();
+  },
+);
 
-Deno.test("update: missing rows throw, check guards against stale versions", async () => {
-  const db = await open();
-  await assertRejects(
-    () => db.update(["accounts", "ghost"], { verified: true }),
-    KrvNotFoundError,
-    "Not found: accounts/ghost",
-  );
+Deno.test(
+  "update: missing rows throw, check guards against stale versions",
+  async () => {
+    const db = await open();
+    await assertRejects(
+      () => db.update(["accounts", "ghost"], { verified: true }),
+      KrvNotFoundError,
+      "Not found: accounts/ghost",
+    );
 
-  const a = await account(db, "a@x.dev");
-  const [read] = await db.list(["accounts"], { values: false });
-  await db.update(a.key, { verified: false }); // someone else
-  await assertRejects(
-    () => db.update(a.key, { verified: true }, { check: read.versionstamp }),
-    KrvConflictError,
-  );
-  db.close();
-});
+    const a = await account(db, "a@x.dev");
+    const [read] = await db.list(["accounts"], { values: false });
+    await db.update(a.key, { verified: false }); // someone else
+    await assertRejects(
+      () => db.update(a.key, { verified: true }, { check: read.versionstamp }),
+      KrvConflictError,
+    );
+    db.close();
+  },
+);

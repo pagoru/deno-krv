@@ -80,24 +80,30 @@ Deno.test("keys: a {placeholder} field can be set explicitly", async () => {
   assertEquals((await db.get(["accounts", "other"])).value?.id, "other");
 });
 
-Deno.test("keys: creating with a key that doesn't match the value's id is rejected", async () => {
-  await using db = await openMemory();
-  await assertRejects(
-    () => db.set(["accounts", "a"], { id: "b", name: "x" }),
-    Error,
-    "doesn't match the key fields",
-  );
-});
+Deno.test(
+  "keys: creating with a key that doesn't match the value's id is rejected",
+  async () => {
+    await using db = await openMemory();
+    await assertRejects(
+      () => db.set(["accounts", "a"], { id: "b", name: "x" }),
+      Error,
+      "doesn't match the key fields",
+    );
+  },
+);
 
-Deno.test('keys: an "id" field is generated once and kept on later sets', async () => {
-  await using db = await openMemory();
+Deno.test(
+  'keys: an "id" field is generated once and kept on later sets',
+  async () => {
+    await using db = await openMemory();
 
-  const { key, value } = await db.insert(["accounts"], { name: "a" });
-  assertEquals(value.token.length, 26);
+    const { key, value } = await db.insert(["accounts"], { name: "a" });
+    assertEquals(value.token.length, 26);
 
-  await db.set(key, { name: "renamed" });
-  assertEquals((await db.get(key)).value?.token, value.token);
-});
+    await db.set(key, { name: "renamed" });
+    assertEquals((await db.get(key)).value?.token, value.token);
+  },
+);
 
 Deno.test("keys: nested keys with several placeholders", async () => {
   await using db = await openMemory();
@@ -122,23 +128,32 @@ Deno.test("keys: nested keys with several placeholders", async () => {
 
 Deno.test("keys: invalid table definitions are rejected at open", async () => {
   const cases: [KrvTables, string][] = [
-    [[
-      table({ key: ["x", "{id}"], schema: { id: "{id}" } }),
-      table({ key: ["{other}", "y"], schema: { other: "{other}" } }),
-    ], "overlapping keys"],
-    [[
-      table({ key: ["x", "{id}"], schema: { name: "string" } }),
-    ], "has no schema field"],
-    [[
-      table({ key: ["x", "{id}"], schema: { id: "{nope}" } }),
-    ], "is not a placeholder"],
-    [[
-      table({ key: ["x", "{id}"], schema: { id: "{id}", b: "{ghost.id}" } }),
-    ], 'referenced table "ghost" does not exist'],
-    [[
-      table({ key: ["x", "{id}"], schema: { id: "{id}" } }),
-      table({ key: ["y", "{id}"], schema: { id: "{id}", a: "{x.nope}" } }),
-    ], "is not a key placeholder"],
+    [
+      [
+        table({ key: ["x", "{id}"], schema: { id: "{id}" } }),
+        table({ key: ["{other}", "y"], schema: { other: "{other}" } }),
+      ],
+      "overlapping keys",
+    ],
+    [
+      [table({ key: ["x", "{id}"], schema: { name: "string" } })],
+      "has no schema field",
+    ],
+    [
+      [table({ key: ["x", "{id}"], schema: { id: "{nope}" } })],
+      "is not a placeholder",
+    ],
+    [
+      [table({ key: ["x", "{id}"], schema: { id: "{id}", b: "{ghost.id}" } })],
+      'referenced table "ghost" does not exist',
+    ],
+    [
+      [
+        table({ key: ["x", "{id}"], schema: { id: "{id}" } }),
+        table({ key: ["y", "{id}"], schema: { id: "{id}", a: "{x.nope}" } }),
+      ],
+      "is not a key placeholder",
+    ],
   ];
 
   for (const [tables, message] of cases) {
@@ -151,34 +166,43 @@ Deno.test("keys: invalid table definitions are rejected at open", async () => {
   }
 });
 
-Deno.test("keys: list throws at the call for an unknown table, before iterating", async () => {
-  await using db = await openMemory();
-  assertThrows(
-    // @ts-expect-error no such table
-    () => db.list(["nope"]),
-    Error,
-    "No table with key nope",
-  );
-});
+Deno.test(
+  "keys: list throws at the call for an unknown table, before iterating",
+  async () => {
+    await using db = await openMemory();
+    assertThrows(
+      // @ts-expect-error no such table
+      () => db.list(["nope"]),
+      Error,
+      "No table with key nope",
+    );
+  },
+);
 
-Deno.test("list: await gives an array, for await streams, both reusable", async () => {
-  await using db = await openMemory();
-  await seed(db);
+Deno.test(
+  "list: await gives an array, for await streams, both reusable",
+  async () => {
+    await using db = await openMemory();
+    await seed(db);
 
-  const result = db.list(["accounts"]);
+    const result = db.list(["accounts"]);
 
-  const rows = await result;
-  assert(Array.isArray(rows));
-  assertEquals(rows.map((r) => r.name), ["alice", "bob"]);
+    const rows = await result;
+    assert(Array.isArray(rows));
+    assertEquals(
+      rows.map((r) => r.name),
+      ["alice", "bob"],
+    );
 
-  const streamed: string[] = [];
-  for await (const row of result) streamed.push(row.name);
-  assertEquals(streamed, ["alice", "bob"]);
+    const streamed: string[] = [];
+    for await (const row of result) streamed.push(row.name);
+    assertEquals(streamed, ["alice", "bob"]);
 
-  // Each use reads again, so it sees new rows.
-  await db.insert(["accounts"], { name: "carol" });
-  assertEquals((await result).length, 3);
-});
+    // Each use reads again, so it sees new rows.
+    await db.insert(["accounts"], { name: "carol" });
+    assertEquals((await result).length, 3);
+  },
+);
 
 // ---- References ----
 
@@ -192,25 +216,29 @@ Deno.test("refs: a post can't reference a missing account", async () => {
   assertEquals(await count(db.list(["posts"])), 0);
 });
 
-Deno.test("refs: list where uses the index and follows reassignments", async () => {
-  await using db = await openMemory();
-  const { alice, bob } = await seed(db);
+Deno.test(
+  "refs: list where uses the index and follows reassignments",
+  async () => {
+    await using db = await openMemory();
+    const { alice, bob } = await seed(db);
 
-  const p1 = await db.insert(["posts"], { title: "p1", accountId: alice.id });
-  await db.insert(["posts"], { title: "p2", accountId: alice.id });
-  await db.insert(["posts"], { title: "p3", accountId: bob.id });
+    const p1 = await db.insert(["posts"], { title: "p1", accountId: alice.id });
+    await db.insert(["posts"], { title: "p2", accountId: alice.id });
+    await db.insert(["posts"], { title: "p3", accountId: bob.id });
 
-  const titlesOf = async (accountId: string) =>
-    (await collect(db.list(["posts"], { where: { accountId } })))
-      .map((e) => e.title);
+    const titlesOf = async (accountId: string) =>
+      (await collect(db.list(["posts"], { where: { accountId } }))).map(
+        (e) => e.title,
+      );
 
-  assertEquals(await titlesOf(alice.id), ["p1", "p2"]);
-  assertEquals(await titlesOf(bob.id), ["p3"]);
+    assertEquals(await titlesOf(alice.id), ["p1", "p2"]);
+    assertEquals(await titlesOf(bob.id), ["p3"]);
 
-  await db.set(p1.key, { title: "p1", accountId: bob.id });
-  assertEquals(await titlesOf(alice.id), ["p2"]);
-  assertEquals(await titlesOf(bob.id), ["p1", "p3"]);
-});
+    await db.set(p1.key, { title: "p1", accountId: bob.id });
+    assertEquals(await titlesOf(alice.id), ["p2"]);
+    assertEquals(await titlesOf(bob.id), ["p1", "p3"]);
+  },
+);
 
 Deno.test("refs: where on a plain field, limit and reverse", async () => {
   await using db = await openMemory();
@@ -228,86 +256,107 @@ Deno.test("refs: where on a plain field, limit and reverse", async () => {
       reverse: true,
     }),
   );
-  assertEquals(limited.map((e) => e.title), ["a", "c"]);
+  assertEquals(
+    limited.map((e) => e.title),
+    ["a", "c"],
+  );
 });
 
-Deno.test("refs: referencing a two-placeholder key uses the row's other fields", async () => {
-  await using db = await openMemory();
-  const { alice } = await seed(db);
-  const org = await db.insert(["orgs"], { name: "acme" });
-  const other = await db.insert(["orgs"], { name: "other" });
-  const member = await db.insert(["orgs", "members"], {
-    orgId: org.value.id,
-    accountId: alice.id,
-  });
+Deno.test(
+  "refs: referencing a two-placeholder key uses the row's other fields",
+  async () => {
+    await using db = await openMemory();
+    const { alice } = await seed(db);
+    const org = await db.insert(["orgs"], { name: "acme" });
+    const other = await db.insert(["orgs"], { name: "other" });
+    const member = await db.insert(["orgs", "members"], {
+      orgId: org.value.id,
+      accountId: alice.id,
+    });
 
-  await db.insert(["notes"], {
-    orgId: org.value.id,
-    memberId: member.value.id,
-    text: "hi",
-  });
+    await db.insert(["notes"], {
+      orgId: org.value.id,
+      memberId: member.value.id,
+      text: "hi",
+    });
 
-  // Same member id, but in the wrong org: that member doesn't exist.
-  await assertRejects(
-    () =>
-      db.insert(["notes"], {
-        orgId: other.value.id,
-        memberId: member.value.id,
-        text: "x",
+    // Same member id, but in the wrong org: that member doesn't exist.
+    await assertRejects(
+      () =>
+        db.insert(["notes"], {
+          orgId: other.value.id,
+          memberId: member.value.id,
+          text: "x",
+        }),
+      KrvReferenceError,
+      "does not exist",
+    );
+
+    const notes = await collect(
+      db.list(["notes"], {
+        where: { orgId: org.value.id, memberId: member.value.id },
       }),
-    KrvReferenceError,
-    "does not exist",
-  );
-
-  const notes = await collect(
-    db.list(["notes"], {
-      where: { orgId: org.value.id, memberId: member.value.id },
-    }),
-  );
-  assertEquals(notes.map((n) => n.text), ["hi"]);
-});
+    );
+    assertEquals(
+      notes.map((n) => n.text),
+      ["hi"],
+    );
+  },
+);
 
 // ---- Delete: restrict / cascade ----
 
-Deno.test("delete: without cascade, a referenced row can't be deleted", async () => {
-  await using db = await openMemory();
-  const { alice } = await seed(db);
-  const post = await db.insert(["posts"], { title: "p", accountId: alice.id });
+Deno.test(
+  "delete: without cascade, a referenced row can't be deleted",
+  async () => {
+    await using db = await openMemory();
+    const { alice } = await seed(db);
+    const post = await db.insert(["posts"], {
+      title: "p",
+      accountId: alice.id,
+    });
 
-  await assertRejects(
-    () => db.delete(["accounts", alice.id]),
-    KrvReferenceError,
-    "cascade: true",
-  );
-  assertEquals((await db.get(["accounts", alice.id])).value?.name, "alice");
+    await assertRejects(
+      () => db.delete(["accounts", alice.id]),
+      KrvReferenceError,
+      "cascade: true",
+    );
+    assertEquals((await db.get(["accounts", alice.id])).value?.name, "alice");
 
-  await db.delete(post.key);
-  await db.delete(["accounts", alice.id]);
-  assertEquals((await db.get(["accounts", alice.id])).value, null);
-});
+    await db.delete(post.key);
+    await db.delete(["accounts", alice.id]);
+    assertEquals((await db.get(["accounts", alice.id])).value, null);
+  },
+);
 
-Deno.test("delete: cascade removes everything that references the row, recursively", async () => {
-  await using db = await openMemory();
-  const { alice, bob } = await seed(db);
-  const post = await db.insert(["posts"], { title: "p", accountId: alice.id });
-  // Bob comments on Alice's post.
-  await db.insert(["comments"], {
-    text: "hi",
-    postId: post.value.id,
-    accountId: bob.id,
-  });
+Deno.test(
+  "delete: cascade removes everything that references the row, recursively",
+  async () => {
+    await using db = await openMemory();
+    const { alice, bob } = await seed(db);
+    const post = await db.insert(["posts"], {
+      title: "p",
+      accountId: alice.id,
+    });
+    // Bob comments on Alice's post.
+    await db.insert(["comments"], {
+      text: "hi",
+      postId: post.value.id,
+      accountId: bob.id,
+    });
 
-  await db.delete(["accounts", alice.id], { cascade: true });
+    await db.delete(["accounts", alice.id], { cascade: true });
 
-  assertEquals((await db.get(post.key)).value, null);
-  assertEquals(await count(db.list(["comments"])), 0);
-  assertEquals(
-    await count(db.list(["posts"], { where: { accountId: alice.id } })),
-    0,
-  );
-  // Bob is no longer referenced, so a plain delete works.
-  await db.delete(["accounts", bob.id]);
-});
+    assertEquals((await db.get(post.key)).value, null);
+    assertEquals(await count(db.list(["comments"])), 0);
+    assertEquals(
+      await count(db.list(["posts"], { where: { accountId: alice.id } })),
+      0,
+    );
+    // Bob is no longer referenced, so a plain delete works.
+    await db.delete(["accounts", bob.id]);
+  },
+);
 
 Deno.test("delete: cascade through nested keys", async () => {
   await using db = await openMemory();
@@ -332,31 +381,40 @@ Deno.test("delete: cascade through nested keys", async () => {
 
 // ---- Key changes ----
 
-Deno.test("move: changing the id moves the row and updates every reference", async () => {
-  await using db = await openMemory();
-  const { alice } = await seed(db);
-  const post = await db.insert(["posts"], { title: "p", accountId: alice.id });
+Deno.test(
+  "move: changing the id moves the row and updates every reference",
+  async () => {
+    await using db = await openMemory();
+    const { alice } = await seed(db);
+    const post = await db.insert(["posts"], {
+      title: "p",
+      accountId: alice.id,
+    });
 
-  await db.set(["accounts", alice.id], { id: "alice", name: "alice" });
+    await db.set(["accounts", alice.id], { id: "alice", name: "alice" });
 
-  assertEquals((await db.get(["accounts", alice.id])).value, null);
-  assertEquals((await db.get(["accounts", "alice"])).value?.token, alice.token);
-  assertEquals((await db.get(post.key)).value?.accountId, "alice");
-  assertEquals(
-    await count(db.list(["posts"], { where: { accountId: "alice" } })),
-    1,
-  );
-  assertEquals(
-    await count(db.list(["posts"], { where: { accountId: alice.id } })),
-    0,
-  );
+    assertEquals((await db.get(["accounts", alice.id])).value, null);
+    assertEquals(
+      (await db.get(["accounts", "alice"])).value?.token,
+      alice.token,
+    );
+    assertEquals((await db.get(post.key)).value?.accountId, "alice");
+    assertEquals(
+      await count(db.list(["posts"], { where: { accountId: "alice" } })),
+      1,
+    );
+    assertEquals(
+      await count(db.list(["posts"], { where: { accountId: alice.id } })),
+      0,
+    );
 
-  // The new key is protected by the moved references.
-  await assertRejects(
-    () => db.delete(["accounts", "alice"]),
-    KrvReferenceError,
-  );
-});
+    // The new key is protected by the moved references.
+    await assertRejects(
+      () => db.delete(["accounts", "alice"]),
+      KrvReferenceError,
+    );
+  },
+);
 
 Deno.test("move: rows whose key contains the reference move too", async () => {
   await using db = await openMemory();
@@ -402,83 +460,96 @@ Deno.test("move: can't move onto an existing key", async () => {
 
 // ---- Races ----
 
-Deno.test("race: cascade delete vs concurrent inserts leaves no orphans", async () => {
-  for (let round = 0; round < 20; round++) {
-    await using db = await openMemory();
-    const { alice } = await seed(db);
-    const insert = () =>
-      db.insert(["posts"], { title: "p", accountId: alice.id });
+Deno.test(
+  "race: cascade delete vs concurrent inserts leaves no orphans",
+  async () => {
+    for (let round = 0; round < 20; round++) {
+      await using db = await openMemory();
+      const { alice } = await seed(db);
+      const insert = () =>
+        db.insert(["posts"], { title: "p", accountId: alice.id });
 
-    const results = await settle<unknown>([
-      ...Array.from({ length: 10 }, insert),
-      db.delete(["accounts", alice.id], { cascade: true }),
-      ...Array.from({ length: 10 }, insert),
-    ]);
+      const results = await settle<unknown>([
+        ...Array.from({ length: 10 }, insert),
+        db.delete(["accounts", alice.id], { cascade: true }),
+        ...Array.from({ length: 10 }, insert),
+      ]);
 
-    for (const { reason } of rejected(results)) {
-      assert(reason instanceof KrvReferenceError, `unexpected: ${reason}`);
-    }
-    assertEquals((await db.get(["accounts", alice.id])).value, null);
-    assertEquals(
-      await count(db.list(["posts"])),
-      0,
-      `orphans in round ${round}`,
-    );
-  }
-});
-
-Deno.test("race: restrict delete vs concurrent insert never leaves a dangling reference", async () => {
-  for (let round = 0; round < 20; round++) {
-    await using db = await openMemory();
-    const { alice } = await seed(db);
-
-    const [insert, remove] = await settle<unknown>([
-      db.insert(["posts"], { title: "p", accountId: alice.id }),
-      db.delete(["accounts", alice.id]),
-    ]);
-
-    const accountExists = (await db.get(["accounts", alice.id])).value !== null;
-    const posts = await count(
-      db.list(["posts"], { where: { accountId: alice.id } }),
-    );
-
-    if (insert.status === "fulfilled") {
-      assert(accountExists && posts === 1);
-      assert(
-        remove.status === "rejected" &&
-          remove.reason instanceof KrvReferenceError,
+      for (const { reason } of rejected(results)) {
+        assert(reason instanceof KrvReferenceError, `unexpected: ${reason}`);
+      }
+      assertEquals((await db.get(["accounts", alice.id])).value, null);
+      assertEquals(
+        await count(db.list(["posts"])),
+        0,
+        `orphans in round ${round}`,
       );
-    } else {
-      assert(!accountExists && posts === 0);
-      assert(remove.status === "fulfilled");
     }
-  }
-});
+  },
+);
 
-Deno.test("race: move vs concurrent insert, a new post always follows the account", async () => {
-  for (let round = 0; round < 20; round++) {
-    await using db = await openMemory();
-    const { alice } = await seed(db);
+Deno.test(
+  "race: restrict delete vs concurrent insert never leaves a dangling reference",
+  async () => {
+    for (let round = 0; round < 20; round++) {
+      await using db = await openMemory();
+      const { alice } = await seed(db);
 
-    const [, insert] = await settle<unknown>([
-      db.set(["accounts", alice.id], { id: "alice", name: "alice" }),
-      db.insert(["posts"], { title: "p", accountId: alice.id }),
-    ]);
+      const [insert, remove] = await settle<unknown>([
+        db.insert(["posts"], { title: "p", accountId: alice.id }),
+        db.delete(["accounts", alice.id]),
+      ]);
 
-    // Either the insert landed first and was moved along, or it found the old key gone.
-    const posts = await collect(db.list(["posts"]));
-    if (insert.status === "fulfilled") {
-      assertEquals(posts.map((p) => p.accountId), ["alice"]);
-    } else {
-      assert(insert.reason instanceof KrvReferenceError, `${insert.reason}`);
-      assertEquals(posts.length, 0);
+      const accountExists =
+        (await db.get(["accounts", alice.id])).value !== null;
+      const posts = await count(
+        db.list(["posts"], { where: { accountId: alice.id } }),
+      );
+
+      if (insert.status === "fulfilled") {
+        assert(accountExists && posts === 1);
+        assert(
+          remove.status === "rejected" &&
+            remove.reason instanceof KrvReferenceError,
+        );
+      } else {
+        assert(!accountExists && posts === 0);
+        assert(remove.status === "fulfilled");
+      }
     }
-    assertEquals(
-      await count(db.list(["posts"], { where: { accountId: alice.id } })),
-      0,
-    );
-  }
-});
+  },
+);
+
+Deno.test(
+  "race: move vs concurrent insert, a new post always follows the account",
+  async () => {
+    for (let round = 0; round < 20; round++) {
+      await using db = await openMemory();
+      const { alice } = await seed(db);
+
+      const [, insert] = await settle<unknown>([
+        db.set(["accounts", alice.id], { id: "alice", name: "alice" }),
+        db.insert(["posts"], { title: "p", accountId: alice.id }),
+      ]);
+
+      // Either the insert landed first and was moved along, or it found the old key gone.
+      const posts = await collect(db.list(["posts"]));
+      if (insert.status === "fulfilled") {
+        assertEquals(
+          posts.map((p) => p.accountId),
+          ["alice"],
+        );
+      } else {
+        assert(insert.reason instanceof KrvReferenceError, `${insert.reason}`);
+        assertEquals(posts.length, 0);
+      }
+      assertEquals(
+        await count(db.list(["posts"], { where: { accountId: alice.id } })),
+        0,
+      );
+    }
+  },
+);
 
 Deno.test("race: concurrent reassignments keep the index in sync", async () => {
   await using db = await openMemory();
@@ -491,10 +562,8 @@ Deno.test("race: concurrent reassignments keep the index in sync", async () => {
   });
 
   await Promise.all(
-    Array.from(
-      { length: 30 },
-      (_, i) =>
-        db.set(post.key, { title: "p", accountId: accounts[i % 3].value.id }),
+    Array.from({ length: 30 }, (_, i) =>
+      db.set(post.key, { title: "p", accountId: accounts[i % 3].value.id }),
     ),
   );
 
@@ -507,26 +576,30 @@ Deno.test("race: concurrent reassignments keep the index in sync", async () => {
   }
 });
 
-Deno.test("race: two connections, cascade delete vs inserts leaves no orphans", async () => {
-  await using shared = await openShared();
-  const { a, b } = shared;
-  const alice = await a.insert(["accounts"], { name: "alice" });
+Deno.test(
+  "race: two connections, cascade delete vs inserts leaves no orphans",
+  async () => {
+    await using shared = await openShared();
+    const { a, b } = shared;
+    const alice = await a.insert(["accounts"], { name: "alice" });
 
-  const results = await settle<unknown>([
-    ...Array.from({ length: 10 }, (_, i) =>
-      (i % 2 ? a : b).insert(["posts"], {
-        title: "p",
-        accountId: alice.value.id,
-      })),
-    b.delete(alice.key, { cascade: true }),
-  ]);
+    const results = await settle<unknown>([
+      ...Array.from({ length: 10 }, (_, i) =>
+        (i % 2 ? a : b).insert(["posts"], {
+          title: "p",
+          accountId: alice.value.id,
+        }),
+      ),
+      b.delete(alice.key, { cascade: true }),
+    ]);
 
-  assert(fulfilled(results).length >= 1);
-  for (const { reason } of rejected(results)) {
-    assert(reason instanceof KrvReferenceError, `unexpected: ${reason}`);
-  }
-  assertEquals(await count(a.list(["posts"])), 0);
-});
+    assert(fulfilled(results).length >= 1);
+    for (const { reason } of rejected(results)) {
+      assert(reason instanceof KrvReferenceError, `unexpected: ${reason}`);
+    }
+    assertEquals(await count(a.list(["posts"])), 0);
+  },
+);
 
 // ---- Table names ----
 
@@ -574,28 +647,38 @@ Deno.test("names: tables are named by their key's literal parts", async () => {
   db.close();
 });
 
-Deno.test("names: two tables can't share a name, and a key needs a literal part", async () => {
-  const cases: [KrvTables, string][] = [
-    [[
-      table({ key: ["a", "{id}"], schema: { id: "{id}" } }),
-      table({
-        key: ["a", "{id}", "{other}"],
-        schema: { id: "{id}", other: "{other}" },
-      }),
-    ], 'Two tables are named "a"'],
-    [[
-      table({ key: ["{id}"], schema: { id: "{id}" } }),
-    ], "needs at least one literal part"],
-    [[
-      table({ key: ["a", "{id}"], schema: { id: "{id}", b: "{b.id}" } }),
-      table({ key: ["b", "c", "{id}"], schema: { id: "{id}" } }),
-    ], 'referenced table "b" does not exist'],
-  ];
-  for (const [tables, message] of cases) {
-    await assertRejects(
-      () => openKRV({ path: ":memory:", tables: tables as never }),
-      Error,
-      message,
-    );
-  }
-});
+Deno.test(
+  "names: two tables can't share a name, and a key needs a literal part",
+  async () => {
+    const cases: [KrvTables, string][] = [
+      [
+        [
+          table({ key: ["a", "{id}"], schema: { id: "{id}" } }),
+          table({
+            key: ["a", "{id}", "{other}"],
+            schema: { id: "{id}", other: "{other}" },
+          }),
+        ],
+        'Two tables are named "a"',
+      ],
+      [
+        [table({ key: ["{id}"], schema: { id: "{id}" } })],
+        "needs at least one literal part",
+      ],
+      [
+        [
+          table({ key: ["a", "{id}"], schema: { id: "{id}", b: "{b.id}" } }),
+          table({ key: ["b", "c", "{id}"], schema: { id: "{id}" } }),
+        ],
+        'referenced table "b" does not exist',
+      ],
+    ];
+    for (const [tables, message] of cases) {
+      await assertRejects(
+        () => openKRV({ path: ":memory:", tables: tables as never }),
+        Error,
+        message,
+      );
+    }
+  },
+);
