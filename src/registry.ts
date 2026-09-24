@@ -36,28 +36,34 @@ export const keysEqual = (a: KrvKey, b: KrvKey) =>
   a.length === b.length && a.every((part, i) => keyPartEquals(part, b[i]));
 
 export const isKeyPart = (value: unknown): value is KrvKeyPart =>
-  typeof value === "string" || typeof value === "number" ||
-  typeof value === "bigint" || typeof value === "boolean" ||
+  typeof value === "string" ||
+  typeof value === "number" ||
+  typeof value === "bigint" ||
+  typeof value === "boolean" ||
   value instanceof Uint8Array;
 
 export const keyToString = (key: KrvKey) => key.map(String).join("/");
 
 /** Stable string id for a key, usable as a Map key. */
 export const keyId = (key: KrvKey) =>
-  JSON.stringify(key.map((part) => {
-    if (part instanceof Uint8Array) return ["u8", Array.from(part)];
-    if (typeof part === "bigint" || typeof part === "symbol") {
-      return [typeof part, String(part)];
-    }
-    return [typeof part, part];
-  }));
+  JSON.stringify(
+    key.map((part) => {
+      if (part instanceof Uint8Array) return ["u8", Array.from(part)];
+      if (typeof part === "bigint" || typeof part === "symbol") {
+        return [typeof part, String(part)];
+      }
+      return [typeof part, part];
+    }),
+  );
 
 /** `[__krv, "index", posts, userId, ...userKey, ...postKey]` → null */
-export const indexPrefix = (
-  source: string,
-  field: string,
-  target: KrvKey,
-) => [INTERNAL, "index", source, field, ...target];
+export const indexPrefix = (source: string, field: string, target: KrvKey) => [
+  INTERNAL,
+  "index",
+  source,
+  field,
+  ...target,
+];
 
 export const indexKey = (
   source: string,
@@ -169,9 +175,11 @@ const parsePattern = (name: string, key: readonly string[]): KeyPattern => {
 /** Two patterns overlap when some key could match both. */
 const overlaps = (a: KeyPattern, b: KeyPattern) =>
   a.length === b.length &&
-  a.every((part, i) =>
-    !("literal" in part) || !("literal" in b[i]) ||
-    part.literal === (b[i] as { literal: string }).literal
+  a.every(
+    (part, i) =>
+      !("literal" in part) ||
+      !("literal" in b[i]) ||
+      part.literal === (b[i] as { literal: string }).literal,
   );
 
 const TRANSFORM_CHAR = /^[^\w$?[\]{}\s]$/u;
@@ -207,7 +215,8 @@ export const createRegistry = (
   for (const table of tables) {
     const pattern = parsePattern(table.key.join("/"), table.key);
     // A table is named by its literal key parts: ["posts", "{id}"] → "posts".
-    const name = pattern.flatMap((p) => "literal" in p ? [p.literal] : [])
+    const name = pattern
+      .flatMap((p) => ("literal" in p ? [p.literal] : []))
       .join(".");
     if (!name) {
       throw new KrvSchemaError(
@@ -221,7 +230,7 @@ export const createRegistry = (
       );
     }
     const placeholders = pattern.flatMap((p) =>
-      "placeholder" in p ? [p.placeholder] : []
+      "placeholder" in p ? [p.placeholder] : [],
     );
     const byPlaceholder = new Map<string, string>();
     const generated: string[] = [];
@@ -292,9 +301,9 @@ export const createRegistry = (
           }
           if (!placeholders.includes(own[1])) {
             throw new KrvSchemaError(
-              `${name}.${field}: "${ref}" is not a placeholder of key ${
-                table.key.join("/")
-              }`,
+              `${name}.${field}: "${ref}" is not a placeholder of key ${table.key.join(
+                "/",
+              )}`,
             );
           }
           bindings[own[1]] = field;
@@ -317,7 +326,7 @@ export const createRegistry = (
         return {
           check: (value, path) =>
             (value === null && allowsNull) ||
-              (value === undefined && allowsUndefined)
+            (value === undefined && allowsUndefined)
               ? []
               : string.check(value, path),
           label: ["string", ...empty.map(describeValue)].join(" | "),
@@ -328,13 +337,15 @@ export const createRegistry = (
 
     const transformed: TransformedField[] = schema.fields.flatMap((f) =>
       f.transform
-        ? [{
-          field: f.name,
-          char: f.transform,
-          modifiers: f.modifiers,
-          transform: transforms[f.transform],
-        }]
-        : []
+        ? [
+            {
+              field: f.name,
+              char: f.transform,
+              modifiers: f.modifiers,
+              transform: transforms[f.transform],
+            },
+          ]
+        : [],
     );
     const opaque = new Set(
       transformed.filter((t) => !t.transform.load).map((t) => t.field),
@@ -348,9 +359,10 @@ export const createRegistry = (
         }
 
         // `using: "#"` applies to every field; `{ phone: "#" }` per field.
-        const usingChars: Record<string, string> = typeof using === "string"
-          ? Object.fromEntries(fields.map((field) => [field, using]))
-          : { ...(using ?? {}) };
+        const usingChars: Record<string, string> =
+          typeof using === "string"
+            ? Object.fromEntries(fields.map((field) => [field, using]))
+            : { ...(using ?? {}) };
         for (const field of Object.keys(usingChars)) {
           if (!fields.includes(field)) {
             throw new KrvSchemaError(
@@ -422,7 +434,7 @@ export const createRegistry = (
       opaque,
       indexes,
       pattern,
-      literals: pattern.flatMap((p) => "literal" in p ? [p.literal] : []),
+      literals: pattern.flatMap((p) => ("literal" in p ? [p.literal] : [])),
       bindings,
       generated,
       references: [],
@@ -451,9 +463,12 @@ export const createRegistry = (
     fieldPlaceholders.set(name, byPlaceholder);
   }
 
-  for (
-    const [sourceName, field, targetName, placeholder] of pendingReferences
-  ) {
+  for (const [
+    sourceName,
+    field,
+    targetName,
+    placeholder,
+  ] of pendingReferences) {
     const source = parsed.get(sourceName)!;
     const target = parsed.get(targetName);
     if (!target) {
@@ -471,8 +486,8 @@ export const createRegistry = (
     const fields: Record<string, string> = { [placeholder]: field };
     for (const other of Object.keys(target.bindings)) {
       if (other === placeholder) continue;
-      const holder = [...fieldPlaceholders.get(source.name)!].find(([, p]) =>
-        p === other
+      const holder = [...fieldPlaceholders.get(source.name)!].find(
+        ([, p]) => p === other,
       )?.[0];
       if (!holder) {
         throw new KrvSchemaError(
@@ -505,7 +520,7 @@ export const createRegistry = (
     table.pattern.every((part, i) =>
       "literal" in part
         ? keyPartEquals(part.literal, key[i])
-        : isKeyPart(key[i])
+        : isKeyPart(key[i]),
     );
 
   /** Finds the table a full row key belongs to. */

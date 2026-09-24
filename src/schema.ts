@@ -34,16 +34,14 @@ export const table = <
   const Schema extends KrvSchemaDef,
   const Timestamps extends boolean = true,
   const Indexes extends Record<string, KrvIndex> = Record<never, never>,
->(
-  definition: {
-    key: Key;
-    schema: Schema;
-    /** Automatic `createdAt` / `updatedAt` fields. Default `true`. */
-    timestamps?: Timestamps;
-    /** Secondary indexes over top-level fields, by name. */
-    indexes?: Indexes;
-  },
-): NoInfer<KrvTable<Key, Schema, Timestamps, Indexes>> => definition;
+>(definition: {
+  key: Key;
+  schema: Schema;
+  /** Automatic `createdAt` / `updatedAt` fields. Default `true`. */
+  timestamps?: Timestamps;
+  /** Secondary indexes over top-level fields, by name. */
+  indexes?: Indexes;
+}): NoInfer<KrvTable<Key, Schema, Timestamps, Indexes>> => definition;
 
 // ---- Runtime schema compiler ----
 
@@ -133,9 +131,9 @@ export const describeValue = (value: unknown): string => {
   return typeof value;
 };
 
-const mismatch = (label: string): Check => (value, path) => [
-  `${path}: expected ${label}, got ${describeValue(value)}`,
-];
+const mismatch =
+  (label: string): Check =>
+  (value, path) => [`${path}: expected ${label}, got ${describeValue(value)}`];
 
 const literal = (expected: unknown, label: string): CompiledSpec => ({
   check: (value, path) =>
@@ -166,7 +164,7 @@ const compileString = (
   const builtin = BUILTINS[spec];
   if (builtin) {
     return {
-      check: (v, path) => builtin(v) ? [] : mismatch(spec)(v, path),
+      check: (v, path) => (builtin(v) ? [] : mismatch(spec)(v, path)),
       label: spec,
       allowsUndefined: spec === "unknown",
     };
@@ -187,9 +185,8 @@ const compileString = (
     throw new KrvSchemaError(`${where}: unknown type "${spec}"`);
   }
 
-  const rawArgs = call[2] === undefined || call[2].trim() === ""
-    ? []
-    : call[2].split(",");
+  const rawArgs =
+    call[2] === undefined || call[2].trim() === "" ? [] : call[2].split(",");
   if (rawArgs.length !== validator.params.length) {
     throw new KrvSchemaError(
       `${where}: "${validator.name}" takes ${validator.params.length} argument(s) ` +
@@ -222,7 +219,7 @@ const compileUnion = (
     throw new KrvSchemaError(`${where}: a union needs at least one option`);
   }
   const compiled = options.map((option) =>
-    compileSpec(option, validators, where)
+    compileSpec(option, validators, where),
   );
   const label = compiled.map((c) => c.label).join(" | ");
 
@@ -242,10 +239,7 @@ const compileUnion = (
 };
 
 /** Wraps a field's spec with its `[]` / `{}` modifiers (applied left to right). */
-const wrap = (
-  inner: CompiledSpec,
-  modifiers: ("[]" | "{}")[],
-): CompiledSpec =>
+const wrap = (inner: CompiledSpec, modifiers: ("[]" | "{}")[]): CompiledSpec =>
   modifiers.reduce<CompiledSpec>((spec, modifier) => {
     if (modifier === "[]") {
       return {
@@ -261,8 +255,8 @@ const wrap = (
       check: (value, path) =>
         isPlainObject(value)
           ? Object.entries(value).flatMap(([key, item]) =>
-            spec.check(item, `${path}.${key}`)
-          )
+              spec.check(item, `${path}.${key}`),
+            )
           : mismatch(`${spec.label}{}`)(value, path),
       label: `${spec.label}{}`,
       allowsUndefined: false,
@@ -326,7 +320,8 @@ export const compileObject = (
       }
     }
 
-    const inner = table?.topLevel(parsed, spec) ??
+    const inner =
+      table?.topLevel(parsed, spec) ??
       compileSpec(spec, validators, `${where}.${name}`);
     const compiled = wrap(inner, modifiers);
     fields.push({
@@ -360,10 +355,9 @@ export const compileObject = (
   const none = new Set<string>();
   const check: Check = (value, path) => checkExcept(value, path, none);
 
-  const label = `{ ${
-    fields.map((f) => `${f.name}${f.optional ? "?" : ""}: ${f.compiled.label}`)
-      .join(", ")
-  } }`;
+  const label = `{ ${fields
+    .map((f) => `${f.name}${f.optional ? "?" : ""}: ${f.compiled.label}`)
+    .join(", ")} }`;
   return {
     check,
     checkExcept,
@@ -385,7 +379,9 @@ export const compileSpec = (
     return compileObject(spec as Record<string, KrvSpec>, validators, where);
   }
   if (
-    spec === null || spec === undefined || typeof spec === "number" ||
+    spec === null ||
+    spec === undefined ||
+    typeof spec === "number" ||
     typeof spec === "boolean"
   ) {
     return literal(spec, describeValue(spec));
@@ -415,9 +411,10 @@ export const compileValidators = (
       throw new KrvSchemaError(`${where}: "${name}" is declared twice`);
     }
 
-    const params = rawParams === undefined || rawParams.trim() === ""
-      ? []
-      : rawParams.split(",").map((p) => p.trim());
+    const params =
+      rawParams === undefined || rawParams.trim() === ""
+        ? []
+        : rawParams.split(",").map((p) => p.trim());
     for (const param of params) {
       if (!IDENTIFIER.test(param)) {
         throw new KrvSchemaError(`${where}: invalid parameter "${param}"`);

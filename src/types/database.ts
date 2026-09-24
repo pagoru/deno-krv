@@ -58,14 +58,11 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
     const X extends Record<string, unknown> = Record<never, never>,
   >(
     key: Key,
-    options?:
-      & KrvGetOptions
-      & {
-        expand?:
-          & X
-          & KrvExpand<Tables, E, KrvTableAtKey<Tables, Key>>
-          & NoInfer<KrvExpandNoClash<X, KrvTableAtKey<Tables, Key>, E>>;
-      },
+    options?: KrvGetOptions & {
+      expand?: X &
+        KrvExpand<Tables, E, KrvTableAtKey<Tables, Key>> &
+        NoInfer<KrvExpandNoClash<X, KrvTableAtKey<Tables, Key>, E>>;
+    },
   ) => Promise<
     KrvEntryMaybe<
       KrvExpanded<
@@ -115,9 +112,7 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
    * });
    * ```
    */
-  set: <
-    const Key extends KrvAnyKey<Tables>,
-  >(
+  set: <const Key extends KrvAnyKey<Tables>>(
     key: Key,
     value: KrvInputAt<Tables, E, Key>,
     options?: KrvSetOptions,
@@ -155,8 +150,8 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
     patch:
       | KrvPatch<KrvInputAt<Tables, E, Key>>
       | ((
-        row: KrvValueAt<Tables, E, Key>,
-      ) => KrvPatch<KrvInputAt<Tables, E, Key>>),
+          row: KrvValueAt<Tables, E, Key>,
+        ) => KrvPatch<KrvInputAt<Tables, E, Key>>),
     options?: KrvUpdateOptions,
   ) => Promise<KrvValueAt<Tables, E, Key>>;
 
@@ -255,39 +250,35 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
     const X extends Record<string, unknown> = Record<never, never>,
   >(
     literals: Literals,
-    options?:
-      & KrvListOptions<
-        KrvValueAtLiterals<Tables, E, Literals>,
-        KrvWhereAtLiterals<Tables, E, Literals>
+    options?: KrvListOptions<
+      KrvValueAtLiterals<Tables, E, Literals>,
+      KrvWhereAtLiterals<Tables, E, Literals>
+    > & {
+      values?: Values;
+      expand?: X &
+        KrvExpand<Tables, E, KrvTableAtLiterals<Tables, Literals>> &
+        NoInfer<KrvExpandNoClash<X, KrvTableAtLiterals<Tables, Literals>, E>>;
+    },
+  ) => Values extends false
+    ? KrvListResult<
+        KrvExpanded<
+          Tables,
+          E,
+          KrvTableAtLiterals<Tables, Literals>,
+          KrvValueAtLiterals<Tables, E, Literals>,
+          X
+        >,
+        KrvRowKeyAtLiterals<Tables, Literals>
       >
-      & {
-        values?: Values;
-        expand?:
-          & X
-          & KrvExpand<Tables, E, KrvTableAtLiterals<Tables, Literals>>
-          & NoInfer<
-            KrvExpandNoClash<X, KrvTableAtLiterals<Tables, Literals>, E>
-          >;
-      },
-  ) => Values extends false ? KrvListResult<
-      KrvExpanded<
-        Tables,
-        E,
-        KrvTableAtLiterals<Tables, Literals>,
-        KrvValueAtLiterals<Tables, E, Literals>,
-        X
-      >,
-      KrvRowKeyAtLiterals<Tables, Literals>
-    >
     : KrvValuesResult<
-      KrvExpanded<
-        Tables,
-        E,
-        KrvTableAtLiterals<Tables, Literals>,
-        KrvValueAtLiterals<Tables, E, Literals>,
-        X
-      >
-    >;
+        KrvExpanded<
+          Tables,
+          E,
+          KrvTableAtLiterals<Tables, Literals>,
+          KrvValueAtLiterals<Tables, E, Literals>,
+          X
+        >
+      >;
 
   /**
    * Finds the first row matching `where` and `filter`, in key order, or
@@ -312,41 +303,37 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
     const X extends Record<string, unknown> = Record<never, never>,
   >(
     literals: Literals,
-    options?:
-      & Omit<
-        KrvListOptions<
-          KrvValueAtLiterals<Tables, E, Literals>,
-          KrvWhereAtLiterals<Tables, E, Literals>
-        >,
-        "limit"
-      >
-      & {
-        values?: Values;
-        expand?:
-          & X
-          & KrvExpand<Tables, E, KrvTableAtLiterals<Tables, Literals>>
-          & NoInfer<
-            KrvExpandNoClash<X, KrvTableAtLiterals<Tables, Literals>, E>
-          >;
-      },
-  ) => Promise<
-    | (Values extends false ? KrvEntry<
-        KrvExpanded<
-          Tables,
-          E,
-          KrvTableAtLiterals<Tables, Literals>,
-          KrvValueAtLiterals<Tables, E, Literals>,
-          X
-        >,
-        KrvRowKeyAtLiterals<Tables, Literals>
-      >
-      : KrvExpanded<
-        Tables,
-        E,
-        KrvTableAtLiterals<Tables, Literals>,
+    options?: Omit<
+      KrvListOptions<
         KrvValueAtLiterals<Tables, E, Literals>,
-        X
-      >)
+        KrvWhereAtLiterals<Tables, E, Literals>
+      >,
+      "limit"
+    > & {
+      values?: Values;
+      expand?: X &
+        KrvExpand<Tables, E, KrvTableAtLiterals<Tables, Literals>> &
+        NoInfer<KrvExpandNoClash<X, KrvTableAtLiterals<Tables, Literals>, E>>;
+    },
+  ) => Promise<
+    | (Values extends false
+        ? KrvEntry<
+            KrvExpanded<
+              Tables,
+              E,
+              KrvTableAtLiterals<Tables, Literals>,
+              KrvValueAtLiterals<Tables, E, Literals>,
+              X
+            >,
+            KrvRowKeyAtLiterals<Tables, Literals>
+          >
+        : KrvExpanded<
+            Tables,
+            E,
+            KrvTableAtLiterals<Tables, Literals>,
+            KrvValueAtLiterals<Tables, E, Literals>,
+            X
+          >)
     | null
   >;
 

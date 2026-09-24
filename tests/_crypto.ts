@@ -10,11 +10,9 @@ export const sha256 = async (value: string) => {
     "SHA-256",
     new TextEncoder().encode(value),
   );
-  return Array.from(
-    new Uint8Array(digest),
-    (b) => b.toString(16).padStart(2, "0"),
-  )
-    .join("");
+  return Array.from(new Uint8Array(digest), (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join("");
 };
 
 export const slowHash = async (value: string) => {
@@ -24,7 +22,7 @@ export const slowHash = async (value: string) => {
 
 export const slowCompare = async (plain: string, stored: string) => {
   const [, , salt, hash] = stored.split("$");
-  return hash === await sha256(salt + plain);
+  return hash === (await sha256(salt + plain));
 };
 
 export const encrypt = (value: string) =>

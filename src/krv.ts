@@ -26,7 +26,10 @@ import {
 type ValidatorMap<V, F> = {
   [K in keyof V]: readonly [
     V[K],
-    K extends keyof F ? F[K] extends readonly [unknown, infer Fn] ? Fn : never
+    K extends keyof F
+      ? F[K] extends readonly [unknown, infer Fn]
+        ? Fn
+        : never
       : never,
   ];
 };
@@ -75,38 +78,35 @@ export const openKRV = async <
   },
   const T extends KrvTransforms = KrvNoTransforms,
   const Tables extends readonly KrvTable[] = readonly [],
->(
-  options: {
-    /** Database file, or `":memory:"`. Omit for Deno's default location. */
-    path?: string;
-    /**
-     * Custom types: `name: [baseType, (value) => boolean]`, or with
-     * arguments `"name(a, b)": [baseType, (value, { a, b }) => boolean]`.
-     */
-    validators?: KrvValidatorDefs<V> & F;
-    /**
-     * What a field name's transform character stores instead of the plain
-     * value: `"*": { save, compare }`, `"&": { save, load }`,
-     * `"#": { save, deterministic: true }`.
-     */
-    transforms?: T & KrvTransforms;
-    /**
-     * The tables, each named by its key's literal parts (`["posts", "{id}"]`
-     * is `posts`). Checked against `validators` once they are inferred.
-     */
-    tables: {
-      [I in keyof Tables]:
-        & Tables[I]
-        & KrvTable<readonly string[], KrvSchemaFor<ValidatorMap<V, F>>>;
-    };
-    /** Migrations, run in id order: objects or modules (`import("./m.ts")`). */
-    migrations?: KrvMigrationSource[];
-    /** Migration lifecycle hooks, awaited. */
-    events?: KrvEvents;
-    /** Milliseconds before an untouched lock file is taken over. Default 30s. */
-    lockTimeout?: number;
-  },
-): Promise<KrvDatabase<Tables, KrvEnv<ValidatorMap<V, F>, T>>> => {
+>(options: {
+  /** Database file, or `":memory:"`. Omit for Deno's default location. */
+  path?: string;
+  /**
+   * Custom types: `name: [baseType, (value) => boolean]`, or with
+   * arguments `"name(a, b)": [baseType, (value, { a, b }) => boolean]`.
+   */
+  validators?: KrvValidatorDefs<V> & F;
+  /**
+   * What a field name's transform character stores instead of the plain
+   * value: `"*": { save, compare }`, `"&": { save, load }`,
+   * `"#": { save, deterministic: true }`.
+   */
+  transforms?: T & KrvTransforms;
+  /**
+   * The tables, each named by its key's literal parts (`["posts", "{id}"]`
+   * is `posts`). Checked against `validators` once they are inferred.
+   */
+  tables: {
+    [I in keyof Tables]: Tables[I] &
+      KrvTable<readonly string[], KrvSchemaFor<ValidatorMap<V, F>>>;
+  };
+  /** Migrations, run in id order: objects or modules (`import("./m.ts")`). */
+  migrations?: KrvMigrationSource[];
+  /** Migration lifecycle hooks, awaited. */
+  events?: KrvEvents;
+  /** Milliseconds before an untouched lock file is taken over. Default 30s. */
+  lockTimeout?: number;
+}): Promise<KrvDatabase<Tables, KrvEnv<ValidatorMap<V, F>, T>>> => {
   const { path } = options;
   const validators = options.validators as unknown as KrvValidators | undefined;
   const registry = createRegistry(
@@ -121,7 +121,7 @@ export const openKRV = async <
 
   try {
     // A backup left behind means a migration crashed halfway: undo it.
-    if (isFilePath(path) && await hasBackup(path)) await restore(path);
+    if (isFilePath(path) && (await hasBackup(path))) await restore(path);
 
     const state: DatabaseState = { kv: await Deno.openKv(path) };
     const db = createDatabase<Tables, KrvEnv<ValidatorMap<V, F>, T>>(

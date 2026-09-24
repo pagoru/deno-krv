@@ -12,7 +12,10 @@ export class KrvValidationError extends Error {
  * already taken, or concurrent writes kept winning.
  */
 export class KrvConflictError extends Error {
-  constructor(readonly key: KrvKey, message?: string) {
+  constructor(
+    readonly key: KrvKey,
+    message?: string,
+  ) {
     super(
       message ??
         `Conflict: versionstamp check failed for ${key.map(String).join("/")}`,

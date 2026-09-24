@@ -12,15 +12,17 @@ type SplitDot<S extends string> = S extends `${infer H}.${infer R}`
   ? [H, ...SplitDot<R>]
   : [S];
 
-type JoinDot<T> = T extends [infer H extends string] ? H
-  : T extends [infer H extends string, ...infer R] ? `${H}.${JoinDot<R>}`
-  : "";
+type JoinDot<T> = T extends [infer H extends string]
+  ? H
+  : T extends [infer H extends string, ...infer R]
+    ? `${H}.${JoinDot<R>}`
+    : "";
 
 type InitOf<T> = T extends [...infer I, unknown] ? I : [];
 
 /** A table's name: its key's literal parts, joined by dots. */
-export type KrvTableName<Table> = KrvTableLiterals<Table> extends
-  readonly [...infer L] ? JoinDot<L> : never;
+export type KrvTableName<Table> =
+  KrvTableLiterals<Table> extends readonly [...infer L] ? JoinDot<L> : never;
 
 /** The table (of `Tables`) with this name. */
 type TableByName<Tables extends KrvTables, Name> = TableByNameOf<
@@ -28,7 +30,9 @@ type TableByName<Tables extends KrvTables, Name> = TableByNameOf<
   Name
 >;
 type TableByNameOf<Table, Name> = Table extends unknown
-  ? KrvTableName<Table> extends Name ? Table : never
+  ? KrvTableName<Table> extends Name
+    ? Table
+    : never
   : never;
 
 // ---- References ----
@@ -38,24 +42,32 @@ type KeyOf<Table> = Table extends { readonly key: infer K } ? K : never;
 
 /** `"{authors.authorId}"` (or a union containing it) → `"authors.authorId"`. */
 type RefString<V> = V extends `{${infer R}}`
-  ? R extends `${string}.${string}` ? R : never
-  : V extends readonly (infer U)[] ? RefString<U>
-  : never;
+  ? R extends `${string}.${string}`
+    ? R
+    : never
+  : V extends readonly (infer U)[]
+    ? RefString<U>
+    : never;
 
 /** A table's reference fields: field name → `"target.placeholder"`. */
 type RefFields<Table> = {
   [
-    K in keyof SchemaOf<Table> as [RefString<SchemaOf<Table>[K]>] extends
-      [never] ? never
+    K in keyof SchemaOf<Table> as [RefString<SchemaOf<Table>[K]>] extends [
+      never,
+    ]
+      ? never
       : KrvFieldName<K>
   ]: RefString<SchemaOf<Table>[K]>;
 };
 
-type TargetName<Ref> = Ref extends string ? JoinDot<InitOf<SplitDot<Ref>>>
+type TargetName<Ref> = Ref extends string
+  ? JoinDot<InitOf<SplitDot<Ref>>>
   : never;
 
 type Placeholders<Key> = Key extends readonly (infer P)[]
-  ? P extends `{${infer Name}}` ? Name : never
+  ? P extends `{${infer Name}}`
+    ? Name
+    : never
   : never;
 
 /** `"books.authorId"` strings: fields of other tables that reference `Table`. */
@@ -63,11 +75,14 @@ type ReverseRefs<Tables extends KrvTables, Table> = ReverseRefsOf<
   Tables[number],
   Table
 >;
-type ReverseRefsOf<Source, Table> = Source extends unknown ? {
-    [F in keyof RefFields<Source>]: TargetName<RefFields<Source>[F]> extends
-      KrvTableName<Table> ? `${KrvTableName<Source>}.${F & string}`
-      : never;
-  }[keyof RefFields<Source>]
+type ReverseRefsOf<Source, Table> = Source extends unknown
+  ? {
+      [F in keyof RefFields<Source>]: TargetName<
+        RefFields<Source>[F]
+      > extends KrvTableName<Table>
+        ? `${KrvTableName<Source>}.${F & string}`
+        : never;
+    }[keyof RefFields<Source>]
   : never;
 
 type ForwardRefs<Table> = keyof RefFields<Table> & string;
@@ -77,8 +92,14 @@ type ForwardRefs<Table> = keyof RefFields<Table> & string;
 type Depth = unknown[];
 type Next<D extends Depth> = [...D, unknown];
 
-type ForwardEntry<Tables extends KrvTables, E, Table, F, D extends Depth> =
-  F extends string ? {
+type ForwardEntry<
+  Tables extends KrvTables,
+  E,
+  Table,
+  F,
+  D extends Depth,
+> = F extends string
+  ? {
       /** A reference field of this row: expands to the row it points to. */
       from: F;
       expand?: KrvExpand<
@@ -91,16 +112,21 @@ type ForwardEntry<Tables extends KrvTables, E, Table, F, D extends Depth> =
         Next<D>
       >;
     }
-    : never;
+  : never;
 
-type ReverseEntry<Tables extends KrvTables, E, R, D extends Depth> = R extends
-  string ? ReverseEntryOf<
-    Tables,
-    E,
-    R,
-    TableByName<Tables, JoinDot<InitOf<SplitDot<R>>>>,
-    D
-  >
+type ReverseEntry<
+  Tables extends KrvTables,
+  E,
+  R,
+  D extends Depth,
+> = R extends string
+  ? ReverseEntryOf<
+      Tables,
+      E,
+      R,
+      TableByName<Tables, JoinDot<InitOf<SplitDot<R>>>>,
+      D
+    >
   : never;
 
 type ReverseEntryOf<Tables extends KrvTables, E, R, Source, D extends Depth> = {
@@ -129,7 +155,8 @@ export type KrvExpand<
   E,
   Table,
   D extends Depth = [],
-> = D["length"] extends 4 ? never
+> = D["length"] extends 4
+  ? never
   : Record<string, ExpandEntry<Tables, E, Table, D>>;
 
 // ---- Results ----
@@ -137,39 +164,44 @@ export type KrvExpand<
 type FromOf<X> = X extends string ? X : X extends { from: infer F } ? F : never;
 type NestedOf<X> = X extends { expand: infer N } ? N : Record<never, never>;
 
-type ForwardResult<Tables extends KrvTables, E, Table, X> = TableByName<
-  Tables,
-  TargetName<RefFields<Table>[FromOf<X> & keyof RefFields<Table>]>
-> extends infer Target ?
-    | KrvExpanded<Tables, E, Target, KrvTableValue<Target, E>, NestedOf<X>>
-    | (null extends
-      KrvTableValue<Table, E>[FromOf<X> & keyof KrvTableValue<Table, E>] ? null
-      : undefined extends
-        KrvTableValue<Table, E>[FromOf<X> & keyof KrvTableValue<Table, E>]
-        ? null
-      : never)
-  : never;
-
-type ReverseResult<Tables extends KrvTables, E, Table, X> = TableByName<
-  Tables,
-  JoinDot<InitOf<SplitDot<FromOf<X> & string>>>
-> extends infer Source ? KrvExpanded<
+type ForwardResult<Tables extends KrvTables, E, Table, X> =
+  TableByName<
     Tables,
-    E,
-    Source,
-    KrvTableValue<Source, E>,
-    NestedOf<X>
-  > extends infer Row
-    // Keyed by the reference itself (1:1): at most one row.
-    ? [Placeholders<KeyOf<Source>>] extends [Placeholders<KeyOf<Table>>]
-      ? Row | null
-    : Row[]
-  : never
-  : never;
+    TargetName<RefFields<Table>[FromOf<X> & keyof RefFields<Table>]>
+  > extends infer Target
+    ? | KrvExpanded<Tables, E, Target, KrvTableValue<Target, E>, NestedOf<X>>
+      | (null extends KrvTableValue<Table, E>[FromOf<X> &
+          keyof KrvTableValue<Table, E>]
+          ? null
+          : undefined extends KrvTableValue<Table, E>[FromOf<X> &
+                keyof KrvTableValue<Table, E>]
+            ? null
+            : never)
+    : never;
 
-type ExpandResult<Tables extends KrvTables, E, Table, X> = FromOf<X> extends
-  `${string}.${string}` ? ReverseResult<Tables, E, Table, X>
-  : ForwardResult<Tables, E, Table, X>;
+type ReverseResult<Tables extends KrvTables, E, Table, X> =
+  TableByName<
+    Tables,
+    JoinDot<InitOf<SplitDot<FromOf<X> & string>>>
+  > extends infer Source
+    ? KrvExpanded<
+        Tables,
+        E,
+        Source,
+        KrvTableValue<Source, E>,
+        NestedOf<X>
+      > extends infer Row
+      ? // Keyed by the reference itself (1:1): at most one row.
+        [Placeholders<KeyOf<Source>>] extends [Placeholders<KeyOf<Table>>]
+        ? Row | null
+        : Row[]
+      : never
+    : never;
+
+type ExpandResult<Tables extends KrvTables, E, Table, X> =
+  FromOf<X> extends `${string}.${string}`
+    ? ReverseResult<Tables, E, Table, X>
+    : ForwardResult<Tables, E, Table, X>;
 
 // `& {}` flattens intersections in editor hovers.
 // deno-lint-ignore ban-types
@@ -181,9 +213,10 @@ export type KrvExpandNoClash<X, Table, E> = {
 };
 
 /** A row with its `expand`ed properties. */
-export type KrvExpanded<Tables extends KrvTables, E, Table, Row, X> =
-  [keyof X] extends [never] ? Row
-    : Prettify<
-      & Row
-      & { -readonly [N in keyof X]: ExpandResult<Tables, E, Table, X[N]> }
+export type KrvExpanded<Tables extends KrvTables, E, Table, Row, X> = [
+  keyof X,
+] extends [never]
+  ? Row
+  : Prettify<
+      Row & { -readonly [N in keyof X]: ExpandResult<Tables, E, Table, X[N]> }
     >;
