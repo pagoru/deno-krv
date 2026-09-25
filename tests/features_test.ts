@@ -97,29 +97,37 @@ const open = (path = ":memory:") =>
 type Db = Awaited<ReturnType<typeof open>>;
 
 const account = (db: Db, email: string, extra: { username?: string } = {}) =>
-  db.insert(["accounts"], {
-    emailHash: email,
-    email,
-    password: `${email}-password`,
-    verified: true,
-    ...extra,
-  });
+  db.insert(
+    ["accounts"],
+    {
+      emailHash: email,
+      email,
+      password: `${email}-password`,
+      verified: true,
+      ...extra,
+    },
+    { values: false },
+  );
 
 const transaction = (
   db: Db,
   accountId: string | null,
   extra: Record<string, unknown> = {},
 ) =>
-  db.insert(["transactions"], {
-    accountId,
-    amount: 695,
-    currency: "eur",
-    status: "succeeded",
-    type: "gift",
-    meta: { source: "web" },
-    tags: ["gift"],
-    ...extra,
-  } as never);
+  db.insert(
+    ["transactions"],
+    {
+      accountId,
+      amount: 695,
+      currency: "eur",
+      status: "succeeded",
+      type: "gift",
+      meta: { source: "web" },
+      tags: ["gift"],
+      ...extra,
+    } as never,
+    { values: false },
+  );
 
 /** Reads stored values directly, bypassing krv. */
 const raw = async (path: string, key: Deno.KvKey) => {
@@ -145,7 +153,7 @@ Deno.test(
 
     await new Promise((r) => setTimeout(r, 5));
     await db.set(key, { ...value, verified: false }); // spread: old updatedAt
-    const updated = (await db.get(key)).value!;
+    const updated = (await db.get(key))!;
     assertEquals(updated.createdAt, value.createdAt);
     assert(updated.updatedAt > value.updatedAt);
     db.close();
@@ -156,17 +164,21 @@ Deno.test("timestamps: can be set explicitly, on insert and set", async () => {
   const db = await open();
   const { key, value } = await account(db, "a@x.dev", {});
   await db.set(key, { ...value, createdAt: 1, updatedAt: 2 });
-  const row = (await db.get(key)).value!;
+  const row = (await db.get(key))!;
   assertEquals([row.createdAt, row.updatedAt], [1, 2]);
 
-  const other = await db.insert(["accounts"], {
-    emailHash: "b@x.dev",
-    email: "b@x.dev",
-    password: "12345678",
-    verified: true,
-    createdAt: 10,
-    updatedAt: 20,
-  });
+  const other = await db.insert(
+    ["accounts"],
+    {
+      emailHash: "b@x.dev",
+      email: "b@x.dev",
+      password: "12345678",
+      verified: true,
+      createdAt: 10,
+      updatedAt: 20,
+    },
+    { values: false },
+  );
   assertEquals([other.value.createdAt, other.value.updatedAt], [10, 20]);
   db.close();
 });
@@ -174,7 +186,7 @@ Deno.test("timestamps: can be set explicitly, on insert and set", async () => {
 Deno.test("timestamps: timestamps: false leaves them out", async () => {
   const db = await open();
   await db.set(["config"], { maintenance: false });
-  assertEquals((await db.get(["config"])).value, { maintenance: false });
+  assertEquals(await db.get(["config"]), { maintenance: false });
   db.close();
 });
 
@@ -194,7 +206,7 @@ Deno.test(
     assert((stored.password as string).startsWith("$fake$"));
 
     const reopened = await open(path);
-    const read = (await reopened.get(key)).value!;
+    const read = (await reopened.get(key))!;
     assertEquals(read.email, "a@x.dev"); // "&" has load: decrypted
     assertEquals(read.emailHash, stored.emailHash); // "#" has no load: the hash
     assertEquals(read.password, stored.password); // "*" has no load: the hash
@@ -207,14 +219,18 @@ Deno.test(
 Deno.test("transforms: arrays are transformed item by item", async () => {
   const path = await tempPath();
   const db = await open(path);
-  const { key } = await db.insert(["accounts"], {
-    emailHash: "a@x.dev",
-    email: "a@x.dev",
-    password: "12345678",
-    verified: true,
-    tokens: ["t1", "t2"],
-  });
-  assertEquals((await db.get(key)).value!.tokens, ["t1", "t2"]);
+  const { key } = await db.insert(
+    ["accounts"],
+    {
+      emailHash: "a@x.dev",
+      email: "a@x.dev",
+      password: "12345678",
+      verified: true,
+      tokens: ["t1", "t2"],
+    },
+    { values: false },
+  );
+  assertEquals((await db.get(key))!.tokens, ["t1", "t2"]);
   db.close();
 
   const stored = (await raw(path, key))!.tokens as string[];
@@ -225,12 +241,16 @@ Deno.test("transforms: validation runs on the plain value", async () => {
   const db = await open();
   await assertRejects(
     () =>
-      db.insert(["accounts"], {
-        emailHash: "a@x.dev",
-        email: "a@x.dev",
-        password: "short",
-        verified: true,
-      }),
+      db.insert(
+        ["accounts"],
+        {
+          emailHash: "a@x.dev",
+          email: "a@x.dev",
+          password: "short",
+          verified: true,
+        },
+        { values: false },
+      ),
     KrvValidationError,
     'accounts.password: "short" is not a valid str(8, 72)',
   );
@@ -245,7 +265,7 @@ Deno.test(
     await db.set(key, { ...value, verified: false });
 
     assert(await db.compare(key, "password", "a@x.dev-password"));
-    assertEquals((await db.get(key)).value!.emailHash, value.emailHash);
+    assertEquals((await db.get(key))!.emailHash, value.emailHash);
     // A new password is hashed.
     await db.set(key, { ...value, password: "new-password" });
     assert(await db.compare(key, "password", "new-password"));
@@ -288,7 +308,7 @@ Deno.test("transforms: raw writes stored values as they are", async () => {
       password: hash,
       verified: true,
     },
-    { raw: ["email", "password"] },
+    { values: false, raw: ["email", "password"] },
   );
   assertEquals(other.value.email, "c@x.dev");
   assertEquals((await raw(path, other.key))!.password, hash);
@@ -386,10 +406,14 @@ Deno.test(
   async () => {
     const path = await tempPath();
     const db = await openKRV({ path, tables: pinned });
-    const { key, value } = await db.insert(["pinned"], {
-      pin: "1234",
-      nickname: "ana",
-    });
+    const { key, value } = await db.insert(
+      ["pinned"],
+      {
+        pin: "1234",
+        nickname: "ana",
+      },
+      { values: false },
+    );
     db.close();
 
     // Secrets are created next to the database, in one binary file readable
@@ -432,18 +456,26 @@ Deno.test(
   async () => {
     const path = await tempPath();
     const db = await openKRV({ path, tables: pinned });
-    const a = await db.insert(["pinned"], {
-      pin: "1234",
-      nickname: "ana",
-      phone: "+34600000000",
-      tags: ["x", "y"],
-      age: 30,
-    });
-    const b = await db.insert(["pinned"], {
-      pin: "1234",
-      nickname: "bea",
-      phone: "+34600000000",
-    });
+    const a = await db.insert(
+      ["pinned"],
+      {
+        pin: "1234",
+        nickname: "ana",
+        phone: "+34600000000",
+        tags: ["x", "y"],
+        age: 30,
+      },
+      { values: false },
+    );
+    const b = await db.insert(
+      ["pinned"],
+      {
+        pin: "1234",
+        nickname: "bea",
+        phone: "+34600000000",
+      },
+      { values: false },
+    );
     assertEquals(a.value.phone, "+34600000000");
     assertEquals(a.value.age, 30);
     db.close();
@@ -456,7 +488,7 @@ Deno.test(
     assertEquals((stored.tags as string[]).length, 2);
 
     const reopened = await openKRV({ path, tables: pinned });
-    const read = (await reopened.get(a.key)).value!;
+    const read = (await reopened.get(a.key))!;
     assertEquals(read.phone, "+34600000000");
     assertEquals(read.tags, ["x", "y"]);
     assertEquals(read.age, 30); // numbers come back as numbers
@@ -501,10 +533,14 @@ Deno.test(
       transforms,
       tables: handles,
     });
-    const { key, value } = await db.insert(["handles"], {
-      name: "PaGoRu",
-      aliases: ["ONE", "Two"],
-    });
+    const { key, value } = await db.insert(
+      ["handles"],
+      {
+        name: "PaGoRu",
+        aliases: ["ONE", "Two"],
+      },
+      { values: false },
+    );
     assertEquals(value.name, "pagoru");
     assertEquals(value.aliases, ["one", "two"]);
     assertEquals((await raw(path, key))!.name, "pagoru");
@@ -514,12 +550,12 @@ Deno.test(
     assert(await db.compare(key, "name", "Pagoru"));
 
     await assertRejects(
-      () => db.insert(["handles"], { name: "pagoru" }),
+      () => db.insert(["handles"], { name: "pagoru" }, { values: false }),
       KrvConflictError,
       "unique",
     );
     await assertRejects(
-      () => db.insert(["handles"], { name: "pa_goru" }),
+      () => db.insert(["handles"], { name: "pa_goru" }, { values: false }),
       KrvValidationError,
     );
     db.close();
@@ -552,7 +588,11 @@ Deno.test(
   async () => {
     const db = await openKRV({ path: ":memory:", tables: pinned });
     const pin = "x".repeat(200);
-    const { key } = await db.insert(["pinned"], { pin, nickname: "ana" });
+    const { key } = await db.insert(
+      ["pinned"],
+      { pin, nickname: "ana" },
+      { values: false },
+    );
     assert(await db.compare(key, "pin", pin));
     assert(!(await db.compare(key, "pin", pin.slice(0, 72))));
     db.close();
@@ -566,10 +606,14 @@ Deno.test("transforms: declared ones replace only their default", async () => {
     transforms: { "*": transforms["*"] },
     tables: pinned,
   });
-  const { key } = await db.insert(["pinned"], {
-    pin: "1234",
-    nickname: "ana",
-  });
+  const { key } = await db.insert(
+    ["pinned"],
+    {
+      pin: "1234",
+      nickname: "ana",
+    },
+    { values: false },
+  );
   db.close();
 
   const stored = (await raw(path, key))!;
@@ -582,10 +626,14 @@ Deno.test("transforms: secrets passed to openKRV aren't written", async () => {
   const path = await tempPath();
   const secrets = { key: "my-key", pepper: "my-pepper" };
   const db = await openKRV({ path, secrets, tables: pinned });
-  const { key } = await db.insert(["pinned"], {
-    pin: "1234",
-    nickname: "ana",
-  });
+  const { key } = await db.insert(
+    ["pinned"],
+    {
+      pin: "1234",
+      nickname: "ana",
+    },
+    { values: false },
+  );
   db.close();
 
   assertEquals(
@@ -780,10 +828,10 @@ Deno.test(
     const db = await open();
     const a = await account(db, "a@x.dev");
     await db.insert(["admins"], { accountId: a.value.id });
-    assertNotEquals((await db.get(["admins", a.value.id])).value, null);
+    assertNotEquals(await db.get(["admins", a.value.id]), null);
 
     await db.delete(a.key, { cascade: true });
-    assertEquals((await db.get(["admins", a.value.id])).value, null);
+    assertEquals(await db.get(["admins", a.value.id]), null);
     db.close();
   },
 );
@@ -809,7 +857,11 @@ Deno.test(
   async () => {
     const path = await tempPath();
     const db = await openMembers(path);
-    const a = await db.insert(["members"], { club: "chess", phone: "+34600" });
+    const a = await db.insert(
+      ["members"],
+      { club: "chess", phone: "+34600" },
+      { values: false },
+    );
     await db.insert(["members"], { club: "chess", phone: "+34611" });
 
     const [found] = await db.list(["members"], { where: { phone: "+34600" } });
@@ -854,7 +906,11 @@ Deno.test(
         }),
       ],
     });
-    const a = await db.insert(["accounts"], { email: "A@b.C" });
+    const a = await db.insert(
+      ["accounts"],
+      { email: "A@b.C" },
+      { values: false },
+    );
 
     for (const email of ["A@b.C", "a@b.c", "A@B.c"]) {
       const found = await db.find(["accounts"], { where: { email } });
@@ -866,7 +922,7 @@ Deno.test(
       null,
     );
     await assertRejects(
-      () => db.insert(["accounts"], { email: "a@B.c" }),
+      () => db.insert(["accounts"], { email: "a@B.c" }, { values: false }),
       KrvConflictError,
       "byEmail",
     );
@@ -874,14 +930,48 @@ Deno.test(
   },
 );
 
+Deno.test('using: "~" on a plain field searches ignoring case', async () => {
+  const db = await openKRV({
+    path: ":memory:",
+    tables: [
+      table({
+        key: ["users", "{userId}"],
+        schema: { id: "{userId}", username: "string" },
+        indexes: {
+          byUsername: { fields: ["username"], using: "~", unique: true },
+        },
+      }),
+    ],
+  });
+  const a = await db.insert(["users"], { username: "Pagoru" });
+
+  for (const username of ["Pagoru", "pagoru", "PAGORU"]) {
+    const found = await db.find(["users"], { where: { username } });
+    assertEquals(found?.id, a.id, username);
+    assertEquals(found?.username, "Pagoru"); // read back as written
+  }
+  assertEquals(await db.find(["users"], { where: { username: "x" } }), null);
+  await assertRejects(
+    () => db.insert(["users"], { username: "PAGORU" }),
+    KrvConflictError,
+    "byUsername",
+  );
+  db.close();
+});
+
 Deno.test(
   "using: unique, updates and deletes follow the plain value",
   async () => {
     const db = await openMembers();
-    const a = await db.insert(["members"], { club: "go", phone: "+1" });
+    const a = await db.insert(
+      ["members"],
+      { club: "go", phone: "+1" },
+      { values: false },
+    );
 
     await assertRejects(
-      () => db.insert(["members"], { club: "go", phone: "+1" }),
+      () =>
+        db.insert(["members"], { club: "go", phone: "+1" }, { values: false }),
       KrvConflictError,
       "byPhone",
     );
@@ -897,7 +987,7 @@ Deno.test(
     );
 
     // Written back unchanged (decrypted value in a spread): index untouched.
-    const current = (await db.get(a.key)).value!;
+    const current = (await db.get(a.key))!;
     await db.set(a.key, { ...current, club: "chess" });
     assertEquals(
       (await db.list(["members"], { where: { phone: "+2" } })).length,
@@ -951,7 +1041,7 @@ Deno.test(
     const [found] = await db.list(["users"], { where: { email: "a@x.dev" } });
     assertEquals(found.email, await transforms["#"].save("a@x.dev"));
     await assertRejects(
-      () => db.insert(["users"], { email: "a@x.dev" }),
+      () => db.insert(["users"], { email: "a@x.dev" }, { values: false }),
       KrvConflictError,
     );
     db.close();
@@ -1002,7 +1092,11 @@ Deno.test(
       }),
     ];
     const v1 = await openKRV({ path, transforms, tables: plainTables });
-    const a = await v1.insert(["members"], { club: "go", phone: "+9" });
+    const a = await v1.insert(
+      ["members"],
+      { club: "go", phone: "+9" },
+      { values: false },
+    );
     v1.close();
 
     const v2 = await openMembers(path);
@@ -1098,7 +1192,7 @@ Deno.test(
     assertEquals(updated.meta, { source: "web", note: "y" }); // merged
     assertEquals(updated.tags, ["c"]); // replaced
     assert(updated.updatedAt >= t.value.updatedAt);
-    assertEquals((await db.get(t.key)).value!.meta.note, "y");
+    assertEquals((await db.get(t.key))!.meta.note, "y");
     db.close();
   },
 );
@@ -1146,7 +1240,7 @@ Deno.test(
         db.update(t.key, (tx) => ({ amount: tx.amount + 1 })),
       ),
     );
-    assertEquals((await db.get(t.key)).value!.amount, 31);
+    assertEquals((await db.get(t.key))!.amount, 31);
     db.close();
   },
 );

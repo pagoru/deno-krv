@@ -26,9 +26,9 @@ const db = await openKRV({
 });
 
 const note = await db.insert(["notes"], { text: "Buy milk", done: false });
-await db.update(note.key, { done: true });
+await db.update(["notes", note.id], { done: true });
 const notes = await db.list(["notes"], { where: { done: true } });
-await db.delete(note.key);
+await db.delete(["notes", note.id]);
 ```
 
 ---
@@ -98,7 +98,7 @@ tables: [
 await db.set(["settings"], { theme: "dark" });
 
 const note = await db.insert(["notes"], { text: "Hi" }); // id generated
-note.key; // ["notes", "01J…"]
+note.id; // "01J…", so its key is ["notes", "01J…"]
 
 await db.set(["notes", "welcome"], { text: "Hello" }); // id from the key
 ```
@@ -184,7 +184,7 @@ export type Post = KrvRow<Db, ["posts"]>; // as read back
 export type NewPost = KrvInput<Db, ["posts"]>; // what insert accepts
 
 export const createPost = async (input: NewPost): Promise<Post> =>
-  (await db.insert(["posts"], input)).value;
+  await db.insert(["posts"], input);
 ```
 
 The table is named by its key's literal parts, as in `insert` and `list`. Custom
@@ -260,9 +260,9 @@ const m = await db.insert(["members"], {
   handle: "Ana",
 });
 
-m.value.phone; // "+34600000000" (decrypted)
-m.value.handle; // "ana"
-await db.compare(m.key, "pin", "1234"); // true
+m.phone; // "+34600000000" (decrypted)
+m.handle; // "ana"
+await db.compare(["members", m.id], "pin", "1234"); // true
 await db.list(["members"], { where: { nickname: "ana" } }); // hashed, then compared
 await db.list(["members"], { where: { phone: "+34600000000" } }); // via byPhone
 await db.list(["members"], { where: { handle: "ANA" } }); // lowercased, then compared
@@ -332,7 +332,7 @@ another row), list the field in `raw`. It's stored as given instead of going
 through the transform again. `insert`, `set` and `update` take it:
 
 ```ts
-await db.update(m.key, { pin: storedHash }, { raw: ["pin"] });
+await db.update(["members", m.id], { pin: storedHash }, { raw: ["pin"] });
 await db.insert(
   ["members"],
   { pin: storedHash, nickname: "ana", phone },
@@ -397,9 +397,9 @@ Every row gets `createdAt` and `updatedAt`:
 
 ```ts
 const todo = await db.insert(["todos"], { title: "Walk" });
-todo.value.createdAt; // 1790000000000
+todo.createdAt; // 1790000000000
 
-await db.set(todo.key, { ...todo.value, title: "Run" }); // updatedAt = now
+await db.set(["todos", todo.id], { ...todo, title: "Run" }); // updatedAt = now
 await db.insert(["todos"], { title: "Old", createdAt: 1600000000000 }); // override
 ```
 
@@ -414,12 +414,13 @@ saved in the row as `expireAt`, a `Date.now()` timestamp like `createdAt`:
 
 ```ts
 const s = await db.insert(["sessions"], { userId }, { expireIn: 3600_000 });
-s.value.expireAt; // 1790003600000
+s.expireAt; // 1790003600000
 
-await db.update(s.key, { lastSeen: Date.now() }); // still expires then
-await db.set(s.key, { ...s.value, userId: other }); // passed back: kept
+const key = ["sessions", s.id] as const;
+await db.update(key, { lastSeen: Date.now() }); // still expires then
+await db.set(key, { ...s, userId: other }); // passed back: kept
 await db.insert(["sessions"], { userId, expireAt: Date.now() + 60_000 }); // same as expireIn
-await db.update(s.key, { expireAt: undefined }); // never expires
+await db.update(key, { expireAt: undefined }); // never expires
 ```
 
 A `set` without `expireAt` (or `expireIn`) doesn't expire. Rows past their
@@ -450,15 +451,15 @@ tables: [
 ```ts
 const le = await db.insert(["authors"], { name: "Le Guin" });
 await db.insert(["books"], {
-  authorId: le.value.id,
+  authorId: le.id,
   title: "The Dispossessed",
 });
 
-await db.list(["books"], { where: { authorId: le.value.id } });
+await db.list(["books"], { where: { authorId: le.id } });
 
 await db.insert(["books"], { authorId: "nobody", title: "?" }); // KrvReferenceError
-await db.delete(le.key); // KrvReferenceError: referenced by books/…
-await db.delete(le.key, { cascade: true }); // deletes her books too
+await db.delete(["authors", le.id]); // KrvReferenceError: referenced by books/…
+await db.delete(["authors", le.id], { cascade: true }); // deletes her books too
 ```
 
 `cascade: "unset"` keeps the referencing rows where it can: an optional
@@ -467,7 +468,7 @@ reference (`"authorId?"`) becomes `undefined`, a nullable one
 Rows whose reference is required are deleted, as with `cascade: true`.
 
 ```ts
-await db.delete(le.key, { cascade: "unset" }); // her books stay, without authorId
+await db.delete(["authors", le.id], { cascade: "unset" }); // her books stay, without authorId
 ```
 
 - `"authorId?": "{authors.authorId}"` or `["{authors.authorId}", null]` makes
@@ -558,7 +559,7 @@ await db.list(["authors"], {
 ```ts
 await db.delete(["accounts", id], { soft: 30 * 24 * 3600_000 }); // 30 days
 
-await db.get(["accounts", id]); // value: null
+await db.get(["accounts", id]); // null
 await db.get(["accounts", id], { deleted: true }); // the row, with deletedAt and expireAt
 await db.restore(["accounts", id]); // back as it was
 ```
@@ -610,7 +611,7 @@ await db.update(["posts", id], (post) => ({ views: post.views + 1 }));
   exist.
 - `check: versionstamp` only updates the version you read, e.g. after a user
   edited it in a form: `{ check: entry.versionstamp }` (entries come from
-  `values: false`).
+  `get(key, { values: false })`).
 - Everything else works as `set`: validation, transforms, indexes, relations
   and `updatedAt`.
 
@@ -638,7 +639,9 @@ const book = await db.find(["books"], { where: { isbn: "978-0" } }); // first ma
 ```
 
 `list` returns the rows themselves; pass `values: false` to get
-`{ key, value, versionstamp }` entries. `find` takes the same options (without
+`{ key, value, versionstamp }` entries. The same goes for `get`, `find`,
+`insert`, `set` and `update`: the row by default, the entry (with the row's
+key, and the versionstamp for `check`) with `values: false`. `find` takes the same options (without
 `limit`) and returns the first match, or `null`. `where` uses the key, unique indexes,
 indexes and references when it can, otherwise it scans. `filter` runs after
 it, and `limit` counts what's left.
@@ -814,10 +817,10 @@ manages the data and no file is written, so pass `secrets`.
 | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `openKRV({ path, tables, … })`                                      | Opens, migrates and checks. Options: `validators`, `transforms`, `migrations`, `events`, `secrets`, `lockTimeout`   |
 | `table({ key, schema, … })`                                         | Optional: keeps a table's types when defined outside `openKRV`. Options: `indexes`, `timestamps`                    |
-| `get(key, { expand?, deleted? })`                                   | One row, or `value: null`; `deleted: true` includes soft-deleted rows                                               |
-| `insert(literals, value, { raw? })`                                 | New row; returns `{ key, value }`                                                                                   |
-| `update(key, patch \| (row) => patch, { check?, raw? })`            | Partial update, merged atomically; returns the row                                                                  |
-| `set(key, value, { check?, raw? })`                                 | Create or replace; `check` a versionstamp for optimistic concurrency; `raw` fields are written as stored            |
+| `get(key, { expand?, deleted?, values? })`                          | One row, or `null`; `deleted: true` includes soft-deleted rows                                                      |
+| `insert(literals, value, { raw?, values? })`                        | New row; returns it                                                                                                 |
+| `update(key, patch \| (row) => patch, { check?, raw?, values? })`   | Partial update, merged atomically; returns the row                                                                  |
+| `set(key, value, { check?, raw?, values? })`                        | Create or replace; returns the row. `check` a versionstamp for optimistic concurrency; `raw` fields as stored       |
 | `delete(key, { cascade?, soft? })`                                  | Delete; `cascade` deletes referencing rows, `"unset"` clears their optional references; `soft` hides it for a while |
 | `restore(key)`                                                      | Bring back a soft-deleted row, with the rows soft-deleted with it                                                   |
 | `purge()`                                                           | Delete soft-deleted rows whose time is up for good, clearing references to them                                     |
@@ -850,7 +853,7 @@ export type Db = Awaited<ReturnType<typeof open>>;
 ```
 
 ```ts
-const note = await db.get(["notes", id]);
+const note = await db.get(["notes", id], { values: false });
 await db.set(
   ["notes", id],
   { ...note.value!, done: true },

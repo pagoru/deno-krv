@@ -1,5 +1,4 @@
-import type { KrvCommitResult } from "./commit.ts";
-import type { KrvEntryMaybe, KrvListResult } from "./entry.ts";
+import type { KrvListResult } from "./entry.ts";
 import type { KrvKey } from "./key.ts";
 import type {
   KrvDeleteOptions,
@@ -17,20 +16,21 @@ import type { KrvTransforms } from "./schema.ts";
  */
 export type KrvUntypedDb = {
   // deno-lint-ignore no-explicit-any
-  get(key: KrvKey, options?: KrvGetOptions): Promise<KrvEntryMaybe<any>>;
+  get(key: KrvKey, options?: KrvGetOptions): Promise<any>;
   set(
     key: KrvKey,
     // deno-lint-ignore no-explicit-any
     value: any,
     options?: KrvSetOptions,
-  ): Promise<KrvCommitResult>;
+    // deno-lint-ignore no-explicit-any
+  ): Promise<any>;
   insert(
     literals: KrvKey,
     // deno-lint-ignore no-explicit-any
     value: any,
     options?: KrvInsertOptions,
     // deno-lint-ignore no-explicit-any
-  ): Promise<KrvCommitResult & { key: KrvKey; value: any }>;
+  ): Promise<any>;
   update(
     key: KrvKey,
     // deno-lint-ignore no-explicit-any

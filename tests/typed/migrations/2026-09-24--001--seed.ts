@@ -4,11 +4,11 @@ import type { Db } from "../config.ts";
 export default {
   url: import.meta.url,
   up: async (db) => {
-    const { value } = await db.insert(["users"], {
+    const user = await db.insert(["users"], {
       username: "ana",
       email: "ana@x.dev",
     });
-    const username: string = value.username;
+    const username: string = user.username;
     await db.raw.set(["seeded"], username);
 
     // Only type-checked: each is a compile error.

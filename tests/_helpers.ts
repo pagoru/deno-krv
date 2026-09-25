@@ -109,7 +109,7 @@ export const increment = async (
   maxRetries = 1_000,
 ): Promise<number> => {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const current = await db.get(["counters", id]);
+    const current = await db.get(["counters", id], { values: false });
     const next = (current.value?.value ?? 0) + 1;
     try {
       await db.set(

@@ -42,19 +42,35 @@ const open = () =>
 
 const seed = async () => {
   const db = await open();
-  const le = await db.insert(["authors"], { name: "Le Guin" });
-  const herbert = await db.insert(["authors"], { name: "Herbert" });
-  const dispossessed = await db.insert(["books"], {
-    authorId: le.value.id,
-    editorId: herbert.value.id,
-    title: "The Dispossessed",
-    published: true,
-  });
-  const draft = await db.insert(["books"], {
-    authorId: le.value.id,
-    title: "Draft",
-    published: false,
-  });
+  const le = await db.insert(
+    ["authors"],
+    { name: "Le Guin" },
+    { values: false },
+  );
+  const herbert = await db.insert(
+    ["authors"],
+    { name: "Herbert" },
+    { values: false },
+  );
+  const dispossessed = await db.insert(
+    ["books"],
+    {
+      authorId: le.value.id,
+      editorId: herbert.value.id,
+      title: "The Dispossessed",
+      published: true,
+    },
+    { values: false },
+  );
+  const draft = await db.insert(
+    ["books"],
+    {
+      authorId: le.value.id,
+      title: "Draft",
+      published: false,
+    },
+    { values: false },
+  );
   await db.insert(["books"], {
     authorId: herbert.value.id,
     title: "Dune",
@@ -75,20 +91,18 @@ Deno.test(
   async () => {
     const { db, dispossessed, draft } = await seed();
 
-    const book = (
-      await db.get(dispossessed.key, {
-        expand: { author: "authorId", editor: "editorId" },
-      })
-    ).value!;
+    const book = (await db.get(dispossessed.key, {
+      expand: { author: "authorId", editor: "editorId" },
+    }))!;
     const name: string = book.author.name;
     assertEquals(name, "Le Guin");
     assertEquals(book.editor?.name, "Herbert");
     assertEquals(book.authorId, book.author.id); // the id stays
 
     // An empty optional reference expands to null.
-    const noEditor = (
-      await db.get(draft.key, { expand: { editor: "editorId" } })
-    ).value!;
+    const noEditor = (await db.get(draft.key, {
+      expand: { editor: "editorId" },
+    }))!;
     assertEquals(noEditor.editor, null);
     db.close();
   },
@@ -99,11 +113,9 @@ Deno.test(
   async () => {
     const { db, le } = await seed();
 
-    const author = (
-      await db.get(le.key, {
-        expand: { books: "books.authorId", drafts: "posts.drafts.authorId" },
-      })
-    ).value!;
+    const author = (await db.get(le.key, {
+      expand: { books: "books.authorId", drafts: "posts.drafts.authorId" },
+    }))!;
     const titles: string[] = author.books.map((b) => b.title);
     assertEquals(titles, ["The Dispossessed", "Draft"]);
     assertEquals(
@@ -119,19 +131,15 @@ Deno.test(
   async () => {
     const { db, le, herbert } = await seed();
 
-    const withProfile = (
-      await db.get(le.key, {
-        expand: { profile: "profiles.authorId" },
-      })
-    ).value!;
+    const withProfile = (await db.get(le.key, {
+      expand: { profile: "profiles.authorId" },
+    }))!;
     const bio: string | undefined = withProfile.profile?.bio;
     assertEquals(bio, "Earthsea");
 
-    const without = (
-      await db.get(herbert.key, {
-        expand: { profile: "profiles.authorId" },
-      })
-    ).value!;
+    const without = (await db.get(herbert.key, {
+      expand: { profile: "profiles.authorId" },
+    }))!;
     assertEquals(without.profile, null);
     db.close();
   },

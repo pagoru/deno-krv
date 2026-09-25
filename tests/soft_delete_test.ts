@@ -57,15 +57,27 @@ const open = async () => {
 };
 
 const seed = async (db: Awaited<ReturnType<typeof open>>["db"]) => {
-  const account = await db.insert(["accounts"], {
-    username: "Pagoru",
-    pin: "1234",
-  });
+  const account = await db.insert(
+    ["accounts"],
+    {
+      username: "Pagoru",
+      pin: "1234",
+    },
+    { values: false },
+  );
   const accountId = account.value.id;
-  const post = await db.insert(["posts"], { authorId: accountId });
-  const comment = await db.insert(["comments"], { postId: post.value.id });
-  const code = await db.insert(["codes"], { accountId });
-  const gift = await db.insert(["gifts"], { accountId });
+  const post = await db.insert(
+    ["posts"],
+    { authorId: accountId },
+    { values: false },
+  );
+  const comment = await db.insert(
+    ["comments"],
+    { postId: post.value.id },
+    { values: false },
+  );
+  const code = await db.insert(["codes"], { accountId }, { values: false });
+  const gift = await db.insert(["gifts"], { accountId }, { values: false });
   return { account, accountId, post, comment, code, gift };
 };
 
@@ -84,38 +96,47 @@ Deno.test("expireAt: expireIn is saved as a timestamp and kept", async () => {
   const { key, value } = await db.insert(
     ["accounts"],
     { username: "a" },
-    { expireIn: 60_000 },
+    { values: false, expireIn: 60_000 },
   );
   assert(value.expireAt! >= before + 60_000);
-  assertEquals((await db.get(key)).value?.expireAt, value.expireAt);
+  assertEquals((await db.get(key))?.expireAt, value.expireAt);
 
   // Kept by update, and by a row passed back to set.
   const updated = await db.update(key, { username: "b" });
   assertEquals(updated.expireAt, value.expireAt);
-  const row = (await db.get(key)).value!;
+  const row = (await db.get(key))!;
   await db.set(key, { ...row, username: "c" });
-  assertEquals((await db.get(key)).value?.expireAt, value.expireAt);
+  assertEquals((await db.get(key))?.expireAt, value.expireAt);
 
   // A patch can drop it.
   await db.update(key, { expireAt: undefined });
-  assertEquals((await db.get(key)).value?.expireAt, undefined);
+  assertEquals((await db.get(key))?.expireAt, undefined);
 });
 
 Deno.test("expireAt: passed in the value, the row expires then", async () => {
   using t = await open();
   const { db } = t;
   const expireAt = Date.now() + 200;
-  const { key } = await db.insert(["accounts"], { username: "a", expireAt });
-  const before = (await db.get(key)).value;
+  const { key } = await db.insert(
+    ["accounts"],
+    { username: "a", expireAt },
+    { values: false },
+  );
+  const before = await db.get(key);
   // Only certain if the read happened in time (slow runners).
   if (Date.now() < expireAt) assert(before);
   await sleepUntil(expireAt);
   // Hidden once past, even before Deno KV removes it.
-  assertEquals((await db.get(key)).value, null);
+  assertEquals(await db.get(key), null);
   assertEquals(await db.list(["accounts"]), []);
 
   await assertRejects(
-    () => db.insert(["accounts"], { username: "b", expireAt: Date.now() - 1 }),
+    () =>
+      db.insert(
+        ["accounts"],
+        { username: "b", expireAt: Date.now() - 1 },
+        { values: false },
+      ),
     KrvValidationError,
     "already past",
   );
@@ -130,9 +151,9 @@ Deno.test("soft: the row and its required children are hidden", async () => {
 
   await db.delete(account.key, { soft: 60_000 });
 
-  assertEquals((await db.get(account.key)).value, null);
-  assertEquals((await db.get(post.key)).value, null);
-  assertEquals((await db.get(comment.key)).value, null);
+  assertEquals(await db.get(account.key), null);
+  assertEquals(await db.get(post.key), null);
+  assertEquals(await db.get(comment.key), null);
   assertEquals(await db.list(["accounts"]), []);
   assertEquals(await db.list(["posts"]), []);
   // Unique lookups don't find it either, nor compare.
@@ -142,7 +163,7 @@ Deno.test("soft: the row and its required children are hidden", async () => {
   );
   assert(!(await db.compare(account.key, "pin", "1234")));
 
-  const shown = (await db.get(account.key, { deleted: true })).value!;
+  const shown = (await db.get(account.key, { deleted: true }))!;
   assertEquals(shown.username, "pagoru");
   assert(shown.deletedAt! <= Date.now());
   assert(shown.expireAt! > Date.now());
@@ -158,11 +179,11 @@ Deno.test(
 
     await db.delete(account.key, { soft: 60_000 });
 
-    const codeRow = (await db.get(code.key)).value!;
+    const codeRow = (await db.get(code.key))!;
     assertEquals(codeRow.accountId, undefined);
-    assertEquals((await db.get(gift.key)).value!.accountId, null);
+    assertEquals((await db.get(gift.key))!.accountId, null);
     assertEquals(
-      (await db.get(code.key, { deleted: true })).value!.accountId,
+      (await db.get(code.key, { deleted: true }))!.accountId,
       accountId,
     );
 
@@ -178,17 +199,17 @@ Deno.test(
     const expanded = await db.get(code.key, {
       expand: { account: "accountId" },
     });
-    assertEquals(expanded.value!.account, null);
+    assertEquals(expanded!.account, null);
     const withAccount = await db.get(code.key, {
       deleted: true,
       expand: { account: { from: "accountId", expand: {} } },
     });
-    assertEquals(withAccount.value!.account?.id, accountId);
+    assertEquals(withAccount!.account?.id, accountId);
     const shown = await db.get(account.key, {
       deleted: true,
       expand: { posts: "posts.authorId" },
     });
-    assertEquals(shown.value!.posts.length, 1);
+    assertEquals(shown!.posts.length, 1);
   },
 );
 
@@ -201,10 +222,10 @@ Deno.test("soft: restore brings the whole group back", async () => {
   // Restoring any member restores the group.
   await db.restore(comment.key);
 
-  assertEquals((await db.get(account.key)).value, account.value);
-  assertEquals((await db.get(post.key)).value, post.value);
-  assertEquals((await db.get(comment.key)).value, comment.value);
-  assertEquals((await db.get(code.key)).value!.accountId, account.value.id);
+  assertEquals(await db.get(account.key), account.value);
+  assertEquals(await db.get(post.key), post.value);
+  assertEquals(await db.get(comment.key), comment.value);
+  assertEquals((await db.get(code.key))!.accountId, account.value.id);
   assertEquals(await internal(kv, "soft"), []);
   assertEquals(await internal(kv, "softOf"), []);
 
@@ -217,14 +238,12 @@ Deno.test("soft: restore keeps an expireAt from before", async () => {
   const { key, value } = await db.insert(
     ["accounts"],
     { username: "a" },
-    { expireIn: 120_000 },
+    { values: false, expireIn: 120_000 },
   );
   await db.delete(key, { soft: 60_000 });
-  assert(
-    (await db.get(key, { deleted: true })).value!.expireAt! < value.expireAt!,
-  );
+  assert((await db.get(key, { deleted: true }))!.expireAt! < value.expireAt!);
   await db.restore(key);
-  assertEquals((await db.get(key)).value!.expireAt, value.expireAt);
+  assertEquals((await db.get(key))!.expireAt, value.expireAt);
 });
 
 Deno.test("soft: unique values stay taken, writes are rejected", async () => {
@@ -234,12 +253,12 @@ Deno.test("soft: unique values stay taken, writes are rejected", async () => {
   await db.delete(account.key, { soft: 60_000 });
 
   await assertRejects(
-    () => db.insert(["accounts"], { username: "PAGORU" }),
+    () => db.insert(["accounts"], { username: "PAGORU" }, { values: false }),
     KrvConflictError,
     "unique",
   );
   await assertRejects(
-    () => db.insert(["posts"], { authorId: accountId }),
+    () => db.insert(["posts"], { authorId: accountId }, { values: false }),
     KrvReferenceError,
   );
   await assertRejects(
@@ -315,7 +334,7 @@ Deno.test("soft: deleting a soft-deleted row purges it now", async () => {
 
   assertEquals((await kv.get(account.key)).versionstamp, null);
   assertEquals((await kv.get(post.key)).versionstamp, null);
-  assertEquals((await db.get(code.key)).value!.accountId, undefined);
+  assertEquals((await db.get(code.key))!.accountId, undefined);
   assertEquals(await internal(kv, "soft"), []);
   await assertRejects(() => db.restore(account.key), KrvNotFoundError);
 });

@@ -1,10 +1,10 @@
 import type { KrvExpand, KrvExpanded, KrvExpandNoClash } from "./expand.ts";
-import type { KrvCommitResult } from "./commit.ts";
 import type {
   KrvEntry,
   KrvEntryMaybe,
   KrvListResult,
   KrvValuesResult,
+  KrvWritten,
 } from "./entry.ts";
 import type {
   KrvDeleteOptions,
@@ -42,38 +42,54 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
    *
    * @param key Full row key, e.g. `["users", id]`, or `["config"]` for a
    *   static table.
-   * @param options `consistency`: `"strong"` (default) or `"eventual"`.
-   * @returns The entry, with transforms loaded. `value` and `versionstamp`
-   *   are `null` when the row doesn't exist.
+   * @param options
+   *   - `consistency`: `"strong"` (default) or `"eventual"`.
+   *   - `values`: `false` to get the `{ key, value, versionstamp }` entry
+   *     instead of just the row (default `true`). `value` and `versionstamp`
+   *     are then `null` when the row doesn't exist.
+   * @returns The row, with transforms loaded, or `null` if it doesn't exist.
    * @throws Error if the key doesn't belong to any table.
    *
    * @example
    * ```ts
    * const user = await db.get(["users", id]);
-   * if (user.value) console.log(user.value.name, user.value.createdAt);
+   * if (user) console.log(user.name, user.createdAt);
+   *
+   * const entry = await db.get(["users", id], { values: false });
+   * entry.versionstamp; // for `check`
    * ```
    */
   get: <
     const Key extends KrvAnyKey<Tables>,
+    const Values extends boolean = true,
     const X extends Record<string, unknown> = Record<never, never>,
   >(
     key: Key,
     options?: KrvGetOptions & {
+      values?: Values;
       expand?: X &
         KrvExpand<Tables, E, KrvTableAtKey<Tables, Key>> &
         NoInfer<KrvExpandNoClash<X, KrvTableAtKey<Tables, Key>, E>>;
     },
   ) => Promise<
-    KrvEntryMaybe<
-      KrvExpanded<
-        Tables,
-        E,
-        KrvTableAtKey<Tables, Key>,
-        KrvValueAt<Tables, E, Key>,
-        X
-      >,
-      Key
-    >
+    Values extends false
+      ? KrvEntryMaybe<
+          KrvExpanded<
+            Tables,
+            E,
+            KrvTableAtKey<Tables, Key>,
+            KrvValueAt<Tables, E, Key>,
+            X
+          >,
+          Key
+        >
+      : KrvExpanded<
+          Tables,
+          E,
+          KrvTableAtKey<Tables, Key>,
+          KrvValueAt<Tables, E, Key>,
+          X
+        > | null
   >;
 
   /**
@@ -97,7 +113,9 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
    *   - `expireIn`: milliseconds until the row expires.
    *   - `raw`: transformed fields whose values are already stored (a hash,
    *     ciphertext…), written as they are instead of transformed again.
-   * @returns `{ ok: true, versionstamp }`.
+   * @returns The row as written (transforms loaded, timestamps set), or with
+   *   `values: false` the `{ key, value, versionstamp }` entry (the new key
+   *   if it moved).
    * @throws KrvValidationError if `value` doesn't match the schema.
    * @throws KrvConflictError if `check` fails, a unique index value or the
    *   destination of a move is taken, or concurrent writes keep winning.
@@ -108,17 +126,20 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
    * await db.set(["users", id], { name: "Pablo" });
    *
    * // Optimistic concurrency: read, modify, write only if unchanged.
-   * const current = await db.get(["users", id]);
+   * const current = await db.get(["users", id], { values: false });
    * await db.set(["users", id], { ...current.value!, age: 30 }, {
    *   check: current.versionstamp,
    * });
    * ```
    */
-  set: <const Key extends KrvAnyKey<Tables>>(
+  set: <
+    const Key extends KrvAnyKey<Tables>,
+    const Values extends boolean = true,
+  >(
     key: Key,
     value: KrvInputAt<Tables, E, Key>,
-    options?: KrvSetOptions<KrvFieldAt<Tables, E, Key>>,
-  ) => Promise<KrvCommitResult>;
+    options?: KrvSetOptions<KrvFieldAt<Tables, E, Key>> & { values?: Values },
+  ) => Promise<KrvWritten<Values, KrvValueAt<Tables, E, Key>, Key>>;
 
   /**
    * Updates part of a row, without reading it first. The patch is merged into
@@ -139,7 +160,8 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
    *   - `expireIn`: milliseconds until the row expires.
    *   - `raw`: transformed fields whose values are already stored (a hash,
    *     ciphertext…), written as they are instead of transformed again.
-   * @returns The updated row.
+   * @returns The updated row, or with `values: false` the
+   *   `{ key, value, versionstamp }` entry (the new key if it moved).
    * @throws KrvNotFoundError if the row doesn't exist.
    * @throws KrvValidationError, KrvConflictError, KrvReferenceError as `set`.
    *
@@ -149,15 +171,20 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
    * await db.update(["posts", id], (post) => ({ views: post.views + 1 }));
    * ```
    */
-  update: <const Key extends KrvAnyKey<Tables>>(
+  update: <
+    const Key extends KrvAnyKey<Tables>,
+    const Values extends boolean = true,
+  >(
     key: Key,
     patch:
       | KrvPatch<KrvInputAt<Tables, E, Key>>
       | ((
           row: KrvValueAt<Tables, E, Key>,
         ) => KrvPatch<KrvInputAt<Tables, E, Key>>),
-    options?: KrvUpdateOptions<KrvFieldAt<Tables, E, Key>>,
-  ) => Promise<KrvValueAt<Tables, E, Key>>;
+    options?: KrvUpdateOptions<KrvFieldAt<Tables, E, Key>> & {
+      values?: Values;
+    },
+  ) => Promise<KrvWritten<Values, KrvValueAt<Tables, E, Key>, Key>>;
 
   /**
    * Creates a new row. Key fields and `"id"` fields left out of `value` get a
@@ -171,8 +198,8 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
    *   - `expireIn`: milliseconds until the row expires.
    *   - `raw`: transformed fields whose values are already stored (a hash,
    *     ciphertext…), written as they are instead of transformed again.
-   * @returns The commit result, plus the row's `key` and `value` (including
-   *   generated fields and timestamps).
+   * @returns The row (including generated fields and timestamps), or with
+   *   `values: false` the `{ key, value, versionstamp }` entry.
    * @throws KrvValidationError if `value` doesn't match the schema.
    * @throws KrvConflictError if the key or a unique index value is taken.
    * @throws KrvReferenceError if a reference points at a missing row.
@@ -180,21 +207,27 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
    * @example
    * ```ts
    * const user = await db.insert(["users"], { name: "Pablo" });
-   * user.key;      // ["users", "01J…"]
-   * user.value.id; // "01J…"
+   * user.id; // "01J…"
+   *
+   * const entry = await db.insert(["users"], { name: "Ana" }, { values: false });
+   * entry.key; // ["users", "01J…"]
    * ```
    */
-  insert: <const Literals extends KrvAnyLiterals<Tables>>(
+  insert: <
+    const Literals extends KrvAnyLiterals<Tables>,
+    const Values extends boolean = true,
+  >(
     literals: Literals,
     value: KrvInputAtLiterals<Tables, E, Literals>,
     options?: KrvInsertOptions<
       keyof KrvValueAtLiterals<Tables, E, Literals> & string
-    >,
+    > & { values?: Values },
   ) => Promise<
-    KrvCommitResult & {
-      key: KrvRowKeyAtLiterals<Tables, Literals>;
-      value: KrvValueAtLiterals<Tables, E, Literals>;
-    }
+    KrvWritten<
+      Values,
+      KrvValueAtLiterals<Tables, E, Literals>,
+      KrvRowKeyAtLiterals<Tables, Literals>
+    >
   >;
 
   /**

@@ -881,21 +881,35 @@ export const createDatabase = <Tables extends KrvTables, E>(
     const expansions = resolveExpand(table, options.expand);
     const { consistency, deleted } = options;
     const entry = await state.kv.get<Row>(key, { consistency });
-    if (entry.value === null) return entry;
-    if (isHidden(entry.value, deleted)) {
-      return { key: entry.key, value: null, versionstamp: null };
+    const missing = { key: entry.key, value: null, versionstamp: null };
+    if (entry.value === null || isHidden(entry.value, deleted)) {
+      return options.values === false ? missing : null;
     }
     const value = await loadRow(table, entry.value);
     if (!deleted) await createUnsetView(consistency)(table, value);
     await expandRows(table, [value], expansions, consistency, deleted);
-    return { ...entry, value };
+    return options.values === false ? { ...entry, value } : value;
   }) as unknown as KrvDatabase<Tables, E>["get"];
 
+  /** A write's result: the row, or its `{ key, value, versionstamp }` entry. */
+  const written = (
+    table: ParsedTable,
+    { result, row, stored }: { result: KrvCommitResult; row: Row; stored: Row },
+    values: boolean | undefined,
+  ) => {
+    const value = output(table, row, stored);
+    if (values !== false) return value;
+    // The row's own key: a write that changes a key field moves it.
+    const key = registry.rowKey(table, row);
+    return { key, value, versionstamp: result.versionstamp };
+  };
+
   const set = (async (key: KrvKey, value: Row, options: KrvSetOptions = {}) =>
-    (await write(key, value, options)).result) as unknown as KrvDatabase<
-    Tables,
-    E
-  >["set"];
+    written(
+      registry.resolveKey(key),
+      await write(key, value, options),
+      options.values,
+    )) as unknown as KrvDatabase<Tables, E>["set"];
 
   const update = (async (
     key: KrvKey,
@@ -920,13 +934,13 @@ export const createDatabase = <Tables extends KrvTables, E>(
       const changes = typeof patch === "function" ? patch(loaded) : patch;
       const merged = mergePatch(table.schema.fields, loaded, changes);
       try {
-        const written = await write(key, merged, {
+        const result = await write(key, merged, {
           check: current.versionstamp,
           expireIn: options.expireIn,
           // Only what the patch sets: the rest of `merged` is loaded values.
           raw: options.raw?.filter((field) => field in changes),
         });
-        return output(table, written.row, written.stored);
+        return written(table, result, options.values);
       } catch (error) {
         // Someone wrote the row in between: merge again on top of it.
         const now = await state.kv.get(key);
@@ -953,12 +967,8 @@ export const createDatabase = <Tables extends KrvTables, E>(
     validate(table, row, rawFields(table, options.raw, row));
 
     const key = registry.rowKey(table, row);
-    const written = await write(key, row, { ...options, check: null });
-    return {
-      ...written.result,
-      key,
-      value: output(table, written.row, written.stored),
-    };
+    const result = await write(key, row, { ...options, check: null });
+    return written(table, result, options.values);
   }) as unknown as KrvDatabase<Tables, E>["insert"];
 
   const remove: KrvDatabase<Tables, E>["delete"] = async (
@@ -1283,37 +1293,37 @@ export const createDatabase = <Tables extends KrvTables, E>(
       // compared once loaded (encrypted ones, found through a `using` index).
       const stored: Row = {};
       const loaded: Row = {};
-      // Loaded fields also match through their indexes' `using` transforms
-      // (`using: "~"` finds "A@b.c" by "a@B.C"): transform → searched value.
-      const loadedUsing = new Map<
+      // Fields indexed `using` a transform also match through it (`using:
+      // "~"` finds "A@b.c" by "a@B.C"): transform → searched value, saved.
+      const usings = new Map<
         string,
         { transform: KrvTransform; value: unknown }[]
       >();
       for (const [field, value] of Object.entries(plainWhere)) {
         if (value === undefined) continue;
         const t = table.transformed.find((t) => t.field === field);
-        if (t && !t.transform.deterministic) {
-          loaded[field] = value;
-          const usings = new Set(
-            table.indexes.flatMap((i) => i.using[field] ?? []),
-          );
-          loadedUsing.set(
-            field,
-            await Promise.all(
-              [...usings].map(async (transform) => ({
-                transform,
-                value: await transform.save(value),
-              })),
-            ),
-          );
-        } else stored[field] = await saveWhereValue(table, field, value);
+        if (t && !t.transform.deterministic) loaded[field] = value;
+        else stored[field] = await saveWhereValue(table, field, value);
+        const transforms = new Set(
+          table.indexes.flatMap((i) => i.using[field] ?? []),
+        );
+        usings.set(
+          field,
+          await Promise.all(
+            [...transforms].map(async (transform) => ({
+              transform,
+              value: await transform.save(value),
+            })),
+          ),
+        );
       }
-      const matchesLoaded = async (value: Row) => {
-        for (const [field, expected] of Object.entries(loaded)) {
+      /** `value` holds plain values for the fields indexed `using` a transform. */
+      const matchesAll = async (value: Row, where: Row) => {
+        for (const [field, expected] of Object.entries(where)) {
           if (matchesWhere(value[field], expected)) continue;
           if (value[field] === undefined || value[field] === null) return false;
           let found = false;
-          for (const using of loadedUsing.get(field) ?? []) {
+          for (const using of usings.get(field) ?? []) {
             const saved = await using.transform.save(value[field]);
             if (matchesWhere(saved, using.value)) {
               found = true;
@@ -1348,15 +1358,10 @@ export const createDatabase = <Tables extends KrvTables, E>(
         if (count >= limit) break;
         if (isHidden(entry.value, opts.deleted)) continue;
         // Re-check every condition: also guards against a stale index read.
-        if (
-          !Object.entries(stored).every(([f, v]) =>
-            matchesWhere(entry.value[f], v),
-          )
-        )
-          continue;
+        if (!(await matchesAll(entry.value, stored))) continue;
 
         const value = await loadRow(table, entry.value);
-        if (!(await matchesLoaded(value))) continue;
+        if (!(await matchesAll(value, loaded))) continue;
         if (view) {
           await view(table, value);
           // A reference to a soft-deleted row no longer matches.

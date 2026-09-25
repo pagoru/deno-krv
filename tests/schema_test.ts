@@ -110,11 +110,11 @@ Deno.test("schema: a valid row is stored with generated fields", async () => {
   await using db = Object.assign(await open(), {
     [Symbol.asyncDispose]: async () => {},
   });
-  const { key, value } = await db.insert(["items"], valid());
+  const { key, value } = await db.insert(["items"], valid(), { values: false });
 
   assertEquals(key, ["items", value.id]);
   assertEquals(value.token.length, 26);
-  assertEquals((await db.get(key)).value, value);
+  assertEquals(await db.get(key), value);
   db.close();
 });
 
@@ -360,7 +360,7 @@ Deno.test("schema: typos are compile errors", () => {
 
 Deno.test("schema: inferred row types", async () => {
   const db = await open();
-  const { value } = await db.insert(["items"], valid());
+  const { value } = await db.insert(["items"], valid(), { values: false });
 
   // Assignments both ways: the inferred type is exactly this.
   type Expected = {
@@ -452,13 +452,17 @@ Deno.test("schema: KrvRow and KrvInput name a table's types", async () => {
   const fromNewPost = (p: NewPost): ExpectedNewPost => p;
   void [toUser, fromUser, toNewPost, fromNewPost];
 
-  const { value: user } = await db.insert(["users"], {
-    email: "a@b.c",
-    name: "A",
-  });
+  const { value: user } = await db.insert(
+    ["users"],
+    {
+      email: "a@b.c",
+      name: "A",
+    },
+    { values: false },
+  );
   const typedUser: User = user;
   const input: NewPost = { userId: typedUser.id, title: "Hi" };
-  const { value: post } = await db.insert(["posts"], input);
+  const { value: post } = await db.insert(["posts"], input, { values: false });
   const typedPost: KrvRow<Db, ["posts"]> = post;
   assertEquals(typedPost.title, "Hi");
 

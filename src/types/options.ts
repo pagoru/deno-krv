@@ -2,6 +2,8 @@ export type KrvConsistency = "strong" | "eventual";
 
 export type KrvGetOptions = {
   consistency?: KrvConsistency;
+  /** `false`: return the `{ key, value, versionstamp }` entry instead of just the row. Default `true`. */
+  values?: boolean;
   /**
    * Include soft-deleted rows (with their `deletedAt`), and show references
    * to them as stored. Without it they're left out, and their optional
@@ -24,10 +26,14 @@ export type KrvSetOptions<Field extends string = string> = {
    * `null` means "only write if the key doesn't exist yet".
    */
   check?: string | null;
+  /** `false`: return the `{ key, value, versionstamp }` entry instead of just the row. Default `true`. */
+  values?: boolean;
 };
 
 export type KrvInsertOptions<Field extends string = string> = {
   expireIn?: number;
+  /** `false`: return the `{ key, value, versionstamp }` entry instead of just the row. Default `true`. */
+  values?: boolean;
   /**
    * Transformed fields whose values are already stored values (a hash,
    * ciphertext…), written as they are instead of through the transform.
@@ -84,6 +90,8 @@ export type KrvListOptions<Row, Where = { [K in keyof Row]?: Row[K] }> = {
 export type KrvUpdateOptions<Field extends string = string> = {
   /** Only update if the row's current versionstamp matches. */
   check?: string;
+  /** `false`: return the `{ key, value, versionstamp }` entry instead of just the row. Default `true`. */
+  values?: boolean;
   expireIn?: number;
   /**
    * Transformed fields whose values are already stored values (a hash,
