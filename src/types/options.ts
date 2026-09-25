@@ -2,6 +2,12 @@ export type KrvConsistency = "strong" | "eventual";
 
 export type KrvGetOptions = {
   consistency?: KrvConsistency;
+  /**
+   * Include soft-deleted rows (with their `deletedAt`), and show references
+   * to them as stored. Without it they're left out, and their optional
+   * references read as `undefined` (or `null`) until purged. Default `false`.
+   */
+  deleted?: boolean;
 };
 
 export type KrvSetOptions<Field extends string = string> = {
@@ -42,6 +48,14 @@ export type KrvDeleteOptions = {
    * Rows whose reference is required are still deleted.
    */
   cascade?: boolean | "unset";
+  /**
+   * Soft delete for this many milliseconds: the row is hidden from reads
+   * (see `deleted`) and can be brought back with `restore`, then it expires.
+   * Rows with a required reference to it are soft-deleted with it; optional
+   * references read as unset, and are cleared for real by `purge`. Its unique
+   * values stay taken meanwhile. `cascade` doesn't apply.
+   */
+  soft?: number;
 };
 
 export type KrvListOptions<Row, Where = { [K in keyof Row]?: Row[K] }> = {
@@ -59,6 +73,12 @@ export type KrvListOptions<Row, Where = { [K in keyof Row]?: Row[K] }> = {
   consistency?: KrvConsistency;
   /** `false`: return `{ key, value, versionstamp }` entries instead of just the rows. Default `true`. */
   values?: boolean;
+  /**
+   * Include soft-deleted rows (with their `deletedAt`), and show references
+   * to them as stored. Without it they're left out, and their optional
+   * references read as `undefined` (or `null`) until purged. Default `false`.
+   */
+  deleted?: boolean;
 };
 
 export type KrvUpdateOptions<Field extends string = string> = {

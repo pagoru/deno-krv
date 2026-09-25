@@ -11,12 +11,14 @@ import type {
 import type { DatabaseState } from "./database.ts";
 import {
   type createRegistry,
+  EXPIRE_AT,
   indexKey,
   INTERNAL,
   keyId,
   keyToString,
   type ParsedTable,
   secondaryPrefix,
+  softOfKey,
   uniqueKey,
 } from "./registry.ts";
 import {
@@ -277,12 +279,19 @@ const rebuildIndexes = async (
   tables: ParsedTable[],
 ) => {
   const report: string[] = [];
-  const writes: [KrvKey, unknown][] = [];
+  // Entries of expiring rows expire with them.
+  const writes: [KrvKey, unknown, number | undefined][] = [];
+  const now = Date.now();
 
   for (const table of tables) {
     const issues: string[] = [];
     const seen = new Map<string, KrvKey>();
     for await (const { key, value } of rows(kv, registry, table)) {
+      const expireAt = value[EXPIRE_AT];
+      const expireIn =
+        typeof expireAt === "number" ? expireAt - now : undefined;
+      if (expireIn !== undefined && expireIn <= 0) continue; // expired
+
       for (const index of table.indexes) {
         const values = await registry.indexValues(table, index, value);
         if (!values) continue;
@@ -290,6 +299,7 @@ const rebuildIndexes = async (
           writes.push([
             [...secondaryPrefix(table.name, index.name, values), ...key],
             null,
+            expireIn,
           ]);
           continue;
         }
@@ -304,13 +314,18 @@ const rebuildIndexes = async (
           continue;
         }
         seen.set(id, key);
-        writes.push([uniqueKey(table.name, index.name, values), key]);
+        writes.push([uniqueKey(table.name, index.name, values), key, expireIn]);
       }
 
       for (const reference of table.references) {
         const target = registry.targetKey(reference, value);
         if (!target) continue;
-        if ((await kv.get(target)).versionstamp === null) {
+        // A soft-deleted target may have expired already: `purge` clears it.
+        if (
+          (await kv.get(target)).versionstamp === null &&
+          (await kv.get(softOfKey(reference.target, target))).versionstamp ===
+            null
+        ) {
           issues.push(
             `${keyToString(key)}: ${reference.field} references missing ${keyToString(
               target,
@@ -318,7 +333,11 @@ const rebuildIndexes = async (
           );
           continue;
         }
-        writes.push([indexKey(table.name, reference.field, target, key), null]);
+        writes.push([
+          indexKey(table.name, reference.field, target, key),
+          null,
+          expireIn,
+        ]);
       }
     }
     if (issues.length) {
@@ -333,7 +352,9 @@ const rebuildIndexes = async (
   for (const table of tables) await dropIndexes(kv, table.name);
   for (let i = 0; i < writes.length; i += CHUNK) {
     const op = kv.atomic();
-    for (const [key, value] of writes.slice(i, i + CHUNK)) op.set(key, value);
+    for (const [key, value, expireIn] of writes.slice(i, i + CHUNK)) {
+      op.set(key, value, { expireIn });
+    }
     await op.commit();
   }
   return report;

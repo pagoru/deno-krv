@@ -39,6 +39,8 @@ export type KrvUntypedDb = {
     // deno-lint-ignore no-explicit-any
   ): Promise<any>;
   delete(key: KrvKey, options?: KrvDeleteOptions): Promise<void>;
+  restore(key: KrvKey): Promise<void>;
+  purge(): Promise<number>;
   list(
     literals: KrvKey,
     // deno-lint-ignore no-explicit-any

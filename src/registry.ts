@@ -94,6 +94,25 @@ export const uniqueKey = (table: string, index: string, values: KrvKey) => [
   ...values,
 ];
 
+/**
+ * A soft delete's group, by when it's purged: `[__krv, "soft", purgeAt,
+ * rootId]` → `{ root, members: [{ key, table, expireAt? }] }` (each member's
+ * `expireAt` from before, for `restore`).
+ */
+export const softPrefix = [INTERNAL, "soft"];
+export const softKey = (purgeAt: number, root: KrvKey) => [
+  ...softPrefix,
+  purgeAt,
+  keyId(root),
+];
+
+/** `[__krv, "softOf", table, ...key]` → `{ purgeAt, root }`, per member. */
+export const softOfPrefix = (table: string) => [INTERNAL, "softOf", table];
+export const softOfKey = (table: string, key: KrvKey) => [
+  ...softOfPrefix(table),
+  ...key,
+];
+
 type Row = Record<string, unknown>;
 
 export type KeyPattern = ({ literal: string } | { placeholder: string })[];
@@ -189,6 +208,9 @@ const overlaps = (a: KeyPattern, b: KeyPattern) =>
 
 const TRANSFORM_CHAR = /^[^\w$?[\]{}\s]$/u;
 const TIMESTAMPS = ["createdAt", "updatedAt"];
+/** Fields every table gets: when the row expires, and when it was soft-deleted. */
+export const EXPIRE_AT = "expireAt";
+export const DELETED_AT = "deletedAt";
 
 export const createRegistry = (
   tables: readonly KrvTable[],
@@ -251,6 +273,16 @@ export const createRegistry = (
     const timestamps = table.timestamps !== false;
 
     const shape: Record<string, KrvSpec> = { ...table.schema };
+    for (const raw of Object.keys(table.schema)) {
+      const field = parseFieldName(raw, name).name;
+      if (field === EXPIRE_AT || field === DELETED_AT) {
+        throw new KrvSchemaError(
+          `${name}.${field}: added automatically; use another name`,
+        );
+      }
+    }
+    shape[`${EXPIRE_AT}?`] = "number";
+    shape[`${DELETED_AT}?`] = "number";
     if (timestamps) {
       for (const raw of Object.keys(table.schema)) {
         const field = parseFieldName(raw, name).name;

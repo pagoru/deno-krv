@@ -24,6 +24,8 @@ import { backoff, commitWithLockRetry } from "./commit.ts";
 import { WriteBatch } from "./batch.ts";
 import {
   type createRegistry,
+  DELETED_AT,
+  EXPIRE_AT,
   guardKey,
   indexKey,
   indexPrefix,
@@ -36,6 +38,10 @@ import {
   type ParsedTable,
   type Reference,
   secondaryPrefix,
+  softKey,
+  softOfKey,
+  softOfPrefix,
+  softPrefix,
   uniqueKey,
 } from "./registry.ts";
 import {
@@ -54,6 +60,30 @@ const GET_MANY_LIMIT = 10;
 
 type Row = Record<string, unknown>;
 type Registry = ReturnType<typeof createRegistry>;
+
+/** A soft delete's group, stored at `softKey` until it's restored or purged. */
+type SoftGroup = {
+  root: KrvKey;
+  members: { key: KrvKey; table: string; expireAt?: number }[];
+};
+/** Stored at `softOfKey` for each member of a group. */
+type SoftOf = { purgeAt: number; root: KrvKey };
+
+/** Milliseconds until `row` expires (at least 1), or undefined if it doesn't. */
+const expireInOf = (row: Row, now: number) => {
+  const at = row[EXPIRE_AT];
+  return typeof at === "number" ? Math.max(1, at - now) : undefined;
+};
+
+/** Past its `expireAt` (Deno KV removes expired keys some time later). */
+const isExpired = (row: Row, now = Date.now()) => {
+  const at = row[EXPIRE_AT];
+  return typeof at === "number" && at <= now;
+};
+
+/** Left out of reads: expired, or soft-deleted unless `deleted` is set. */
+const isHidden = (row: Row, deleted?: boolean) =>
+  isExpired(row) || (!deleted && row[DELETED_AT] !== undefined);
 
 /** The open `Deno.Kv`. Replaced while migrations take and restore backups. */
 export type DatabaseState = { kv: Deno.Kv };
@@ -135,8 +165,8 @@ export const createDatabase = <Tables extends KrvTables, E>(
   ) => {
     const pending = batch.pending(target);
     if (pending === "set") return;
-    const entry = pending === "delete" ? null : await state.kv.get(target);
-    if (!entry || entry.versionstamp === null) {
+    const entry = pending === "delete" ? null : await state.kv.get<Row>(target);
+    if (!entry || entry.versionstamp === null || isHidden(entry.value)) {
       throw new KrvReferenceError(
         `${table.name}.${reference.field}: ${keyToString(
           target,
@@ -155,6 +185,7 @@ export const createDatabase = <Tables extends KrvTables, E>(
     key: KrvKey,
     row: Row,
     expireIn: number | undefined,
+    refresh: boolean,
   ) => {
     const moved = oldKey !== null && !keysEqual(oldKey, key);
     for (const index of table.indexes) {
@@ -163,7 +194,7 @@ export const createDatabase = <Tables extends KrvTables, E>(
         : null;
       const after = await registry.indexValues(table, index, row);
       const same = before && after && keysEqual(before, after);
-      if (same && !moved) continue;
+      if (same && !moved && !refresh) continue;
 
       if (before) removeIndex(batch, table, index, before, oldKey!);
       if (!after) continue;
@@ -217,7 +248,8 @@ export const createDatabase = <Tables extends KrvTables, E>(
   /**
    * Adds writing `row` (stored values) to `batch`: the row itself, its
    * indexes and, when its key changes, the rows referencing it (which may
-   * move in turn).
+   * move in turn). They expire at the row's `expireAt`, if it has one.
+   * `refresh` re-writes unchanged index entries too, for a new expiry.
    */
   const planWrite = async (
     batch: WriteBatch,
@@ -225,10 +257,11 @@ export const createDatabase = <Tables extends KrvTables, E>(
     oldKey: KrvKey | null,
     oldRow: Row | null,
     row: Row,
-    expireIn: number | undefined,
     visited: Set<string>,
     now: number,
+    refresh = false,
   ) => {
+    const expireIn = expireInOf(row, now);
     const key = registry.rowKey(table, row);
     visited.add(keyId(key));
     const moved = oldKey !== null && !keysEqual(oldKey, key);
@@ -250,14 +283,32 @@ export const createDatabase = <Tables extends KrvTables, E>(
     }
     batch.set(key, row, expireIn, true);
 
-    await planIndexes(batch, table, oldKey, oldRow, key, row, expireIn);
+    await planIndexes(
+      batch,
+      table,
+      oldKey,
+      oldRow,
+      key,
+      row,
+      expireIn,
+      refresh,
+    );
 
     // Outgoing references.
     for (const reference of table.references) {
       const before = oldRow ? registry.targetKey(reference, oldRow) : null;
       const after = registry.targetKey(reference, row);
       const sameTarget = before && after && keysEqual(before, after);
-      if (sameTarget && !moved) continue;
+      if (sameTarget && !moved) {
+        if (refresh) {
+          batch.set(
+            indexKey(table.name, reference.field, after, key),
+            null,
+            expireIn,
+          );
+        }
+        continue;
+      }
 
       if (before) {
         batch.delete(indexKey(table.name, reference.field, before, oldKey!));
@@ -306,7 +357,6 @@ export const createDatabase = <Tables extends KrvTables, E>(
           childKey,
           child.value,
           updated,
-          undefined,
           visited,
           now,
         );
@@ -327,12 +377,14 @@ export const createDatabase = <Tables extends KrvTables, E>(
    * `cascade` is set; otherwise their existence throws. With `"unset"`, rows
    * whose reference can be empty are collected in `unsets` instead, to be
    * written once every delete is planned (a delete of the same row wins).
+   * `row` is null when it's already gone (expired along with its entries),
+   * leaving only the rows that reference it.
    */
   const planDelete = async (
     batch: WriteBatch,
     table: ParsedTable,
     key: KrvKey,
-    row: Row,
+    row: Row | null,
     cascade: KrvDeleteOptions["cascade"],
     visited: Set<string>,
     unsets: Map<string, Unset>,
@@ -341,16 +393,18 @@ export const createDatabase = <Tables extends KrvTables, E>(
     visited.add(keyId(key));
     batch.delete(key);
 
-    for (const index of table.indexes) {
-      const values = await registry.indexValues(table, index, row);
-      if (values) removeIndex(batch, table, index, values, key);
-    }
+    if (row) {
+      for (const index of table.indexes) {
+        const values = await registry.indexValues(table, index, row);
+        if (values) removeIndex(batch, table, index, values, key);
+      }
 
-    for (const reference of table.references) {
-      const target = registry.targetKey(reference, row);
-      if (!target) continue;
-      batch.delete(indexKey(table.name, reference.field, target, key));
-      batch.set(guardKey(target), null);
+      for (const reference of table.references) {
+        const target = registry.targetKey(reference, row);
+        if (!target) continue;
+        batch.delete(indexKey(table.name, reference.field, target, key));
+        batch.set(guardKey(target), null);
+      }
     }
 
     if (table.incoming.length === 0) return;
@@ -407,6 +461,131 @@ export const createDatabase = <Tables extends KrvTables, E>(
     }
   };
 
+  /** Writes the rows `planDelete` collected, unless they're deleted too. */
+  const planUnsets = async (
+    batch: WriteBatch,
+    unsets: Map<string, Unset>,
+    now: number,
+  ) => {
+    for (const { table, key, before, after } of unsets.values()) {
+      if (batch.pending(key) === "delete") continue;
+      if (table.timestamps) after.updatedAt = now;
+      await planWrite(batch, table, key, before, after, new Set(), now);
+    }
+  };
+
+  /**
+   * Adds soft-deleting `key` to `batch`: the row gets `deletedAt` and expires
+   * at `purgeAt` (or earlier, if it already did), and so do its index
+   * entries. Rows with a required reference to it join the group; those with
+   * an optional one are left as they are (reads show it unset until purged).
+   */
+  const planSoftDelete = async (
+    batch: WriteBatch,
+    table: ParsedTable,
+    key: KrvKey,
+    row: Row,
+    group: SoftGroup,
+    now: number,
+    purgeAt: number,
+    visited: Set<string>,
+  ) => {
+    if (visited.has(keyId(key))) return;
+    visited.add(keyId(key));
+
+    const expireAt = row[EXPIRE_AT] as number | undefined;
+    group.members.push({
+      key,
+      table: table.name,
+      ...(expireAt !== undefined && { expireAt }),
+    });
+    const next = {
+      ...row,
+      [DELETED_AT]: now,
+      [EXPIRE_AT]: Math.min(expireAt ?? Infinity, purgeAt),
+    };
+    await planWrite(batch, table, key, row, next, new Set(), now, true);
+    batch.set(softOfKey(table.name, key), {
+      purgeAt,
+      root: group.root,
+    } satisfies SoftOf);
+
+    if (table.incoming.length === 0) return;
+
+    // A reference added meanwhile touches the guard: the commit retries.
+    const guard = guardKey(key);
+    const guardEntry = await state.kv.get(guard);
+    batch.check(guard, guardEntry.versionstamp);
+
+    for (const { source, reference } of table.incoming) {
+      if (reference.unset) continue;
+      const prefix = indexPrefix(source.name, reference.field, key);
+      for await (const entry of state.kv.list({ prefix })) {
+        const childKey = entry.key.slice(prefix.length);
+        const child = await state.kv.get<Row>(childKey);
+        if (child.versionstamp === null) {
+          batch.delete(entry.key); // stale index entry
+          continue;
+        }
+        // Already soft-deleted by another group: it goes with that one.
+        if (child.value[DELETED_AT] !== undefined) continue;
+        batch.check(childKey, child.versionstamp);
+        await planSoftDelete(
+          batch,
+          source,
+          childKey,
+          child.value,
+          group,
+          now,
+          purgeAt,
+          visited,
+        );
+      }
+    }
+  };
+
+  /**
+   * Deletes a soft delete's group for good, like `cascade: "unset"`: rows
+   * with an optional reference to a member get it cleared.
+   * @returns Whether the group was still there.
+   */
+  const purgeGroup = async (purgeAt: number, root: KrvKey) => {
+    for (let attempt = 0; attempt <= MAX_CONFLICT_RETRIES; attempt++) {
+      if (attempt > 0) await backoff(attempt);
+
+      const group = await state.kv.get<SoftGroup>(softKey(purgeAt, root));
+      if (group.value === null) return false;
+      const batch = new WriteBatch().check(group.key, group.versionstamp);
+      batch.delete(group.key);
+
+      const visited = new Set<string>();
+      const unsets = new Map<string, Unset>();
+      for (const member of group.value.members) {
+        batch.delete(softOfKey(member.table, member.key));
+        const table = registry.byName(member.table);
+        if (!table) continue;
+        const entry = await state.kv.get<Row>(member.key);
+        batch.check(member.key, entry.versionstamp);
+        // Not soft-deleted anymore: rewritten after a hard delete. Leave it.
+        if (entry.value && entry.value[DELETED_AT] === undefined) continue;
+        await planDelete(
+          batch,
+          table,
+          member.key,
+          entry.value,
+          "unset",
+          visited,
+          unsets,
+        );
+      }
+      await planUnsets(batch, unsets, Date.now());
+
+      const result = await commitWithLockRetry(() => batch.build(state.kv));
+      if (result.ok) return true;
+    }
+    throw new KrvConflictError(root);
+  };
+
   /**
    * Validates, transforms and writes `value` at `key`.
    * @returns The commit result and the row as validated (plain values).
@@ -427,6 +606,12 @@ export const createDatabase = <Tables extends KrvTables, E>(
       if (check !== undefined && current.versionstamp !== check) {
         throw new KrvConflictError(key);
       }
+      if (current.value && current.value[DELETED_AT] !== undefined) {
+        throw new KrvConflictError(
+          key,
+          `${keyToString(key)} is soft-deleted: restore it first`,
+        );
+      }
 
       // Opaque fields (e.g. hashes) passed back unchanged are kept as stored.
       const keep = new Set(
@@ -440,6 +625,13 @@ export const createDatabase = <Tables extends KrvTables, E>(
 
       const now = Date.now();
       const filled = fill(table, value, key, current.value, now);
+      delete filled[DELETED_AT]; // only soft deletes set it
+      if (expireIn !== undefined) filled[EXPIRE_AT] = now + expireIn;
+      else if (isExpired(filled, now)) {
+        throw new KrvValidationError([
+          `${table.name}.${EXPIRE_AT}: ${filled[EXPIRE_AT]} is already past`,
+        ]);
+      }
       // Raw fields: stored as given, but loaded (when they can be) to check
       // they're readable and valid, and to return their plain values.
       const rawStored = Object.fromEntries([...raw].map((f) => [f, filled[f]]));
@@ -469,7 +661,6 @@ export const createDatabase = <Tables extends KrvTables, E>(
         exists ? key : null,
         current.value,
         stored,
-        expireIn,
         new Set(),
         now,
       );
@@ -488,6 +679,53 @@ export const createDatabase = <Tables extends KrvTables, E>(
       if (stored[field] !== undefined) value[field] = stored[field];
     }
     return value;
+  };
+
+  /**
+   * Shows references to soft-deleted rows as `cascade: "unset"` will leave
+   * them once purged (`undefined` or `null`). One per read: it remembers
+   * which tables have soft-deleted rows, and which targets are.
+   */
+  const createUnsetView = (consistency?: Deno.KvConsistencyLevel) => {
+    const tables = new Map<string, Promise<boolean>>();
+    const targets = new Map<string, Promise<boolean>>();
+    const hasSoft = (table: string) => {
+      let found = tables.get(table);
+      if (!found) {
+        found = (async () => {
+          const entries = state.kv.list(
+            { prefix: softOfPrefix(table) },
+            { limit: 1, consistency },
+          );
+          for await (const _ of entries) return true;
+          return false;
+        })();
+        tables.set(table, found);
+      }
+      return found;
+    };
+    const isSoft = (table: string, target: KrvKey) => {
+      const id = keyId(target);
+      let found = targets.get(id);
+      if (!found) {
+        found = state.kv
+          .get(softOfKey(table, target), { consistency })
+          .then((entry) => entry.versionstamp !== null);
+        targets.set(id, found);
+      }
+      return found;
+    };
+
+    /** Clears `row`'s references to soft-deleted rows, in place. */
+    return async (table: ParsedTable, row: Row) => {
+      for (const reference of table.references) {
+        if (!reference.unset || !(await hasSoft(reference.target))) continue;
+        const target = registry.targetKey(reference, row);
+        if (target && (await isSoft(reference.target, target))) {
+          row[reference.field] = reference.unset === "null" ? null : undefined;
+        }
+      }
+    };
   };
 
   type Expansion =
@@ -566,13 +804,18 @@ export const createDatabase = <Tables extends KrvTables, E>(
       return { name, kind: "reverse", reference, source, single, options };
     });
 
-  /** Adds each expansion to `rows` (loaded values), in place. */
+  /**
+   * Adds each expansion to `rows` (loaded values), in place. Without
+   * `deleted`, soft-deleted rows are left out and references to them unset.
+   */
   const expandRows = async (
     table: ParsedTable,
     rows: Row[],
     expansions: Expansion[],
-    consistency?: Deno.KvConsistencyLevel,
+    consistency: Deno.KvConsistencyLevel | undefined,
+    deleted: boolean | undefined,
   ): Promise<void> => {
+    const view = deleted ? null : createUnsetView(consistency);
     for (const expansion of expansions) {
       if (expansion.kind === "forward") {
         // Batched: every distinct target of these rows, 10 per read.
@@ -584,7 +827,9 @@ export const createDatabase = <Tables extends KrvTables, E>(
         const found = new Map<string, Row>();
         const targets: Row[] = [];
         for await (const entry of fetchRows([...keys.values()], consistency)) {
+          if (isHidden(entry.value, deleted)) continue;
           const value = await loadRow(expansion.target, entry.value);
+          await view?.(expansion.target, value);
           found.set(keyId(entry.key), value);
           targets.push(value);
         }
@@ -593,6 +838,7 @@ export const createDatabase = <Tables extends KrvTables, E>(
           targets,
           expansion.nested,
           consistency,
+          deleted,
         );
         for (const row of rows) {
           const target = registry.targetKey(expansion.reference, row);
@@ -617,6 +863,7 @@ export const createDatabase = <Tables extends KrvTables, E>(
             limit: single ? 1 : options.limit,
             reverse: options.reverse,
             consistency,
+            deleted,
             expand: options.expand,
           });
           row[expansion.name] = single ? (found[0] ?? null) : found;
@@ -631,10 +878,15 @@ export const createDatabase = <Tables extends KrvTables, E>(
   ) => {
     const table = registry.resolveKey(key);
     const expansions = resolveExpand(table, options.expand);
-    const entry = await state.kv.get<Row>(key, options);
+    const { consistency, deleted } = options;
+    const entry = await state.kv.get<Row>(key, { consistency });
     if (entry.value === null) return entry;
+    if (isHidden(entry.value, deleted)) {
+      return { key: entry.key, value: null, versionstamp: null };
+    }
     const value = await loadRow(table, entry.value);
-    await expandRows(table, [value], expansions, options.consistency);
+    if (!deleted) await createUnsetView(consistency)(table, value);
+    await expandRows(table, [value], expansions, consistency, deleted);
     return { ...entry, value };
   }) as unknown as KrvDatabase<Tables, E>["get"];
 
@@ -713,7 +965,10 @@ export const createDatabase = <Tables extends KrvTables, E>(
     options = {},
   ) => {
     const table = registry.resolveKey(key);
-    const { check, cascade = false } = options;
+    const { check, cascade = false, soft } = options;
+    if (soft !== undefined && !(soft > 0)) {
+      throw new Error(`soft must be a positive number of milliseconds`);
+    }
 
     for (let attempt = 0; attempt <= MAX_CONFLICT_RETRIES; attempt++) {
       if (attempt > 0) await backoff(attempt);
@@ -725,30 +980,49 @@ export const createDatabase = <Tables extends KrvTables, E>(
       if (current.versionstamp === null) return;
 
       const batch = new WriteBatch().check(key, current.versionstamp);
-      const unsets = new Map<string, Unset>();
-      await planDelete(
-        batch,
-        table,
-        key,
-        current.value,
-        cascade,
-        new Set(),
-        unsets,
-      );
       const now = Date.now();
-      for (const { table, key, before, after } of unsets.values()) {
-        if (batch.pending(key) === "delete") continue;
-        if (table.timestamps) after.updatedAt = now;
-        await planWrite(
+
+      if (current.value[DELETED_AT] !== undefined) {
+        if (soft !== undefined) {
+          throw new KrvConflictError(
+            key,
+            `${keyToString(key)} is already soft-deleted`,
+          );
+        }
+        // Deleting it for good: its whole group goes now.
+        const of = await state.kv.get<SoftOf>(softOfKey(table.name, key));
+        if (of.value) {
+          await purgeGroup(of.value.purgeAt, of.value.root);
+          return;
+        }
+      }
+
+      if (soft !== undefined) {
+        const group: SoftGroup = { root: key, members: [] };
+        const purgeAt = now + soft;
+        await planSoftDelete(
           batch,
           table,
           key,
-          before,
-          after,
-          undefined,
-          new Set(),
+          current.value,
+          group,
           now,
+          purgeAt,
+          new Set(),
         );
+        batch.set(softKey(purgeAt, key), group);
+      } else {
+        const unsets = new Map<string, Unset>();
+        await planDelete(
+          batch,
+          table,
+          key,
+          current.value,
+          cascade,
+          new Set(),
+          unsets,
+        );
+        await planUnsets(batch, unsets, now);
       }
 
       const result = await commitWithLockRetry(() => batch.build(state.kv));
@@ -756,6 +1030,66 @@ export const createDatabase = <Tables extends KrvTables, E>(
     }
 
     throw new KrvConflictError(key);
+  };
+
+  const restore: KrvDatabase<Tables, E>["restore"] = async (key) => {
+    const table = registry.resolveKey(key);
+    for (let attempt = 0; attempt <= MAX_CONFLICT_RETRIES; attempt++) {
+      if (attempt > 0) await backoff(attempt);
+
+      const now = Date.now();
+      const of = await state.kv.get<SoftOf>(softOfKey(table.name, key));
+      if (of.value === null || of.value.purgeAt <= now) {
+        throw new KrvNotFoundError(key);
+      }
+      const group = await state.kv.get<SoftGroup>(
+        softKey(of.value.purgeAt, of.value.root),
+      );
+      if (group.value === null) throw new KrvNotFoundError(key);
+
+      const batch = new WriteBatch().check(group.key, group.versionstamp);
+      batch.delete(group.key);
+      for (const member of group.value.members) {
+        batch.delete(softOfKey(member.table, member.key));
+        const source = registry.byName(member.table);
+        const entry = await state.kv.get<Row>(member.key);
+        if (!source || entry.value === null) continue;
+        batch.check(member.key, entry.versionstamp);
+
+        const next = { ...entry.value };
+        delete next[DELETED_AT];
+        if (member.expireAt === undefined) delete next[EXPIRE_AT];
+        else next[EXPIRE_AT] = member.expireAt;
+        await planWrite(
+          batch,
+          source,
+          member.key,
+          entry.value,
+          next,
+          new Set(),
+          now,
+          true,
+        );
+      }
+
+      const result = await commitWithLockRetry(() => batch.build(state.kv));
+      if (result.ok) return;
+    }
+    throw new KrvConflictError(key);
+  };
+
+  const purge: KrvDatabase<Tables, E>["purge"] = async () => {
+    let purged = 0;
+    const due = state.kv.list<SoftGroup>({
+      start: softPrefix,
+      end: [...softPrefix, Date.now()],
+    });
+    for await (const { key, value } of due) {
+      if (await purgeGroup(key[softPrefix.length] as number, value.root)) {
+        purged++;
+      }
+    }
+    return purged;
   };
 
   const compare: KrvDatabase<Tables, E>["compare"] = async (
@@ -776,7 +1110,8 @@ export const createDatabase = <Tables extends KrvTables, E>(
     }
 
     const entry = await state.kv.get<Row>(key);
-    const stored = entry.value?.[field];
+    if (entry.value === null || isHidden(entry.value)) return false;
+    const stored = entry.value[field];
     if (stored === undefined || stored === null) return false;
 
     const { transform } = transformed;
@@ -962,6 +1297,7 @@ export const createDatabase = <Tables extends KrvTables, E>(
           batch.map((b) => b.value),
           expansions,
           opts.consistency,
+          opts.deleted,
         );
         for (const { entry, value } of batch) {
           yield opts.values === false ? { ...entry, value } : value;
@@ -969,9 +1305,12 @@ export const createDatabase = <Tables extends KrvTables, E>(
         batch = [];
       };
 
+      const view = opts.deleted ? null : createUnsetView(opts.consistency);
+      const references = new Set(table.references.map((r) => r.field));
       let count = 0;
       for await (const entry of plan(table, stored, plainWhere, opts)) {
         if (count >= limit) break;
+        if (isHidden(entry.value, opts.deleted)) continue;
         // Re-check every condition: also guards against a stale index read.
         if (
           !Object.entries(stored).every(([f, v]) =>
@@ -985,6 +1324,16 @@ export const createDatabase = <Tables extends KrvTables, E>(
           !Object.entries(loaded).every(([f, v]) => matchesWhere(value[f], v))
         )
           continue;
+        if (view) {
+          await view(table, value);
+          // A reference to a soft-deleted row no longer matches.
+          if (
+            !Object.entries(stored).every(
+              ([f, v]) => !references.has(f) || matchesWhere(value[f], v),
+            )
+          )
+            continue;
+        }
         if (opts.filter && !opts.filter(value)) continue;
         count++;
         batch.push({ entry, value });
@@ -1039,6 +1388,8 @@ export const createDatabase = <Tables extends KrvTables, E>(
     update,
     insert,
     delete: remove,
+    restore,
+    purge,
     list,
     find,
     compare,

@@ -33,6 +33,12 @@ export type KrvCommitError = {
 export type KrvConsistency = "strong" | "eventual";
 export type KrvGetOptions = {
   consistency?: KrvConsistency;
+  /**
+   * Include soft-deleted rows (with their `deletedAt`), and show references
+   * to them as stored. Without it they're left out, and their optional
+   * references read as `undefined` (or `null`) until purged. Default `false`.
+   */
+  deleted?: boolean;
 };
 export type KrvSetOptions<Field extends string = string> = {
   expireIn?: number;
@@ -70,6 +76,14 @@ export type KrvDeleteOptions = {
    * Rows whose reference is required are still deleted.
    */
   cascade?: boolean | "unset";
+  /**
+   * Soft delete for this many milliseconds: the row is hidden from reads
+   * (see `deleted`) and can be brought back with `restore`, then it expires.
+   * Rows with a required reference to it are soft-deleted with it; optional
+   * references read as unset, and are cleared for real by `purge`. Its unique
+   * values stay taken meanwhile. `cascade` doesn't apply.
+   */
+  soft?: number;
 };
 export type KrvListOptions<
   Row,
@@ -91,6 +105,12 @@ export type KrvListOptions<
   consistency?: KrvConsistency;
   /** `false`: return `{ key, value, versionstamp }` entries instead of just the rows. Default `true`. */
   values?: boolean;
+  /**
+   * Include soft-deleted rows (with their `deletedAt`), and show references
+   * to them as stored. Without it they're left out, and their optional
+   * references read as `undefined` (or `null`) until purged. Default `false`.
+   */
+  deleted?: boolean;
 };
 export type KrvUpdateOptions<Field extends string = string> = {
   /** Only update if the row's current versionstamp matches. */
@@ -385,6 +405,14 @@ type Timestamps<TS> = TS extends false
       createdAt: number;
       updatedAt: number;
     };
+/**
+ * Every table's automatic fields: when the row expires (a `Date.now()`
+ * timestamp, from `expireIn`), and when it was soft-deleted.
+ */
+type Lifetime = {
+  expireAt?: number;
+  deletedAt?: number;
+};
 /** A table row as read back. `V`: validators, `T`: transforms, `TS`: timestamps. */
 export type KrvTableRow<S, V, T, TS> = Prettify<
   {
@@ -399,7 +427,8 @@ export type KrvTableRow<S, V, T, TS> = Prettify<
         ? KrvTopFieldName<K, T>
         : never
     ]?: TopField<K, S[K], V, T>;
-  } & Timestamps<TS>
+  } & Timestamps<TS> &
+    Lifetime
 >;
 /** What `insert`/`set` accept: plain values; generated fields and timestamps may be left out. */
 export type KrvTableInput<S, V, T, TS> = Prettify<
@@ -419,7 +448,9 @@ export type KrvTableInput<S, V, T, TS> = Prettify<
           ? KrvTopFieldName<K, T>
           : never
     ]?: TopFieldInput<K, S[K], V, T>;
-  } & Partial<Timestamps<TS>>
+  } & Partial<Timestamps<TS>> & {
+      expireAt?: number;
+    }
 >;
 type WhereValue<X> = X extends Date | Uint8Array | readonly unknown[]
   ? X
@@ -637,6 +668,8 @@ export type KrvUntypedDb = {
   >;
   update(key: KrvKey, patch: any, options?: KrvUpdateOptions): Promise<any>;
   delete(key: KrvKey, options?: KrvDeleteOptions): Promise<void>;
+  restore(key: KrvKey): Promise<void>;
+  purge(): Promise<number>;
   list(
     literals: KrvKey,
     options?: KrvListOptions<any, any>,
@@ -1114,21 +1147,51 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
    * @param key Full row key.
    * @param options
    *   - `cascade`: also delete every row referencing this one, recursively.
-   *     Without it, deleting a referenced row throws.
+   *     Without it, deleting a referenced row throws. `"unset"` clears
+   *     optional or nullable references instead of deleting their rows.
+   *   - `soft`: hide it for this many milliseconds instead, restorable with
+   *     `restore`; after that it expires and `purge` clears what referenced
+   *     it. Deleting a soft-deleted row without `soft` purges it right away.
    *   - `check`: only delete if the row's current versionstamp matches.
    * @throws KrvReferenceError if the row is referenced and `cascade` is not set.
-   * @throws KrvConflictError if `check` fails.
+   * @throws KrvConflictError if `check` fails, or the row is already
+   *   soft-deleted and `soft` is passed again.
    *
    * @example
    * ```ts
    * await db.delete(["posts", postId]);
    * await db.delete(["users", userId], { cascade: true }); // and their posts
+   * await db.delete(["users", userId], { cascade: "unset" }); // posts.userId?
+   * await db.delete(["users", userId], { soft: 30 * 24 * 3600_000 }); // 30 days
    * ```
    */
   delete: <const Key extends KrvAnyKey<Tables>>(
     key: Key,
     options?: KrvDeleteOptions,
   ) => Promise<void>;
+  /**
+   * Brings back a soft-deleted row before it expires, with every row soft-
+   * deleted along with it (restoring any of them restores the whole group),
+   * and their previous `expireAt`.
+   *
+   * @throws KrvNotFoundError if the row isn't soft-deleted, or its time is up.
+   *
+   * @example
+   * ```ts
+   * await db.delete(["users", userId], { soft: 60_000 });
+   * await db.restore(["users", userId]);
+   * ```
+   */
+  restore: <const Key extends KrvAnyKey<Tables>>(key: Key) => Promise<void>;
+  /**
+   * Deletes soft-deleted rows whose time is up for good, as with
+   * `cascade: "unset"`: optional references to them become `undefined` (or
+   * `null`). Deno KV drops the expired rows by itself; this clears what
+   * pointed to them. Call it from time to time, e.g. from a cron.
+   *
+   * @returns How many soft deletes were purged.
+   */
+  purge: () => Promise<number>;
   /**
    * Lists a table's rows, in key order.
    *

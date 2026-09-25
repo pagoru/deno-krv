@@ -307,6 +307,12 @@ type Timestamps<TS> = TS extends false
   ? KrvNoTransforms
   : { createdAt: number; updatedAt: number };
 
+/**
+ * Every table's automatic fields: when the row expires (a `Date.now()`
+ * timestamp, from `expireIn`), and when it was soft-deleted.
+ */
+type Lifetime = { expireAt?: number; deletedAt?: number };
+
 /** A table row as read back. `V`: validators, `T`: transforms, `TS`: timestamps. */
 export type KrvTableRow<S, V, T, TS> = Prettify<
   {
@@ -321,7 +327,8 @@ export type KrvTableRow<S, V, T, TS> = Prettify<
         ? KrvTopFieldName<K, T>
         : never
     ]?: TopField<K, S[K], V, T>;
-  } & Timestamps<TS>
+  } & Timestamps<TS> &
+    Lifetime
 >;
 
 /** What `insert`/`set` accept: plain values; generated fields and timestamps may be left out. */
@@ -342,7 +349,7 @@ export type KrvTableInput<S, V, T, TS> = Prettify<
           ? KrvTopFieldName<K, T>
           : never
     ]?: TopFieldInput<K, S[K], V, T>;
-  } & Partial<Timestamps<TS>>
+  } & Partial<Timestamps<TS>> & { expireAt?: number }
 >;
 
 /** Nested objects in `where` match partially. */
