@@ -21,5 +21,10 @@ export type KrvEntryMaybe<T, K = KrvKey> =
 export type KrvListResult<T, K = KrvKey> = AsyncIterable<KrvEntry<T, K>> &
   PromiseLike<KrvEntry<T, K>[]>;
 
+/** What `insert`, `set` and `update` return: the row, or its entry with `values: false`. */
+export type KrvWritten<Values, T, K = KrvKey> = Values extends false
+  ? KrvEntry<T, K>
+  : T;
+
 /** Result of `list` (default): the rows only, no key or versionstamp. */
 export type KrvValuesResult<T> = AsyncIterable<T> & PromiseLike<T[]>;

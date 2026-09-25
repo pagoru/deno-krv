@@ -444,7 +444,7 @@ Deno.test(
         }),
       ],
     });
-    assertEquals((await v2.get(["users", "a"])).value?.age, 0);
+    assertEquals((await v2.get(["users", "a"]))?.age, 0);
     v2.close();
   },
 );
