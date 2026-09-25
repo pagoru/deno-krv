@@ -722,6 +722,8 @@ const db = await openKRV({
   `migrationFailed`, `afterMigrations`. Each is awaited; a throw fails the run.
   Their migrations carry `id` (`2026-10-01--001`), `fileName`
   (`2026-10-01--001--todo-priority`) and `name` (`todo-priority`, if any).
+  `beforeMigrations` also gets `backup(password)`, to keep a copy of the
+  database before the migrations (see [Backups](#backups)).
 - Applied migrations are stored under `["__krv", "migrations", id]` with
   `id`, `fileName`, `description`, `appliedAt` and `durationMs`.
 - With `:memory:` there's no backup: errors are just thrown.
@@ -821,6 +823,30 @@ await db.restoreBackup(saved, Deno.env.get("BACKUP_PASSWORD")!);
 - Anyone with a backup and its password has the data and the secrets: keep
   the password out of the backups' storage.
 
+**Before migrating**: `beforeMigrations` gets `backup`, the same as
+`db.backup`, since `db` doesn't exist yet while `openKRV` migrates. It's the
+database as it is before the pending migrations: the state a failed run goes
+back to.
+
+```ts
+const db = await openKRV({
+  ...config,
+  path: "./app.db",
+  migrations: [import("./migrations/2026-10-01--001--seed.ts")],
+  events: {
+    beforeMigrations: async ({ pending, backup }) => {
+      const bytes = await backup(Deno.env.get("BACKUP_PASSWORD")!);
+      await s3.putObject(`backups/${ulid()}--${pending[0].id}.krvb`, bytes);
+    },
+  },
+});
+```
+
+It only runs when migrations are pending, and it's awaited: a throw (the
+upload failed) cancels the migrations and `openKRV` throws, with the database
+unchanged. Pass `migrations` and `events` to `openKRV`, not `defineKRV`, so
+the event is typed.
+
 ---
 
 ## Files on disk
@@ -834,7 +860,7 @@ With `path: "./app.db"`:
 | `app.db-wal`, `app.db-shm`        | SQLite's journal                          | While open; removed on `close()`     |
 | `app.db.lock`                     | Only one process opens or migrates        | While `openKRV` runs                 |
 | `app.db.backup` (+ `-wal`/`-shm`) | Copy taken before migrating               | While migrating; restored on failure |
-| `app.db.snapshot`                 | Copy taken by `db.backup()`               | While `backup()` runs                |
+| `app.db.snapshot-…`               | Copy taken by `db.backup()`               | While `backup()` runs                |
 
 Keep `app.db` and `app.db.secrets` together, backed up, and out of git:
 
