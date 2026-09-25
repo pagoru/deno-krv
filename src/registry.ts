@@ -104,6 +104,11 @@ export type Reference = {
   placeholder: string;
   /** Target key placeholder → field of the referencing row that holds its value. */
   fields: Record<string, string>;
+  /**
+   * What `delete` with `cascade: "unset"` sets it to: `"undefined"` when
+   * it's optional, `"null"` when it can only be null. Unset when required.
+   */
+  unset?: "undefined" | "null";
 };
 
 export type TransformedField = {
@@ -210,7 +215,13 @@ export const createRegistry = (
   const parsed = new Map<string, ParsedTable>();
   // Placeholder name referenced by each field, own or foreign.
   const fieldPlaceholders = new Map<string, Map<string, string>>();
-  const pendingReferences: [string, string, string, string][] = [];
+  const pendingReferences: [
+    string,
+    string,
+    string,
+    string,
+    Reference["unset"],
+  ][] = [];
 
   for (const table of tables) {
     const pattern = parsePattern(table.key.join("/"), table.key);
@@ -310,7 +321,17 @@ export const createRegistry = (
           generated.push(field);
           byPlaceholder.set(field, own[1]);
         } else if (foreign) {
-          pendingReferences.push([name, field, foreign[1], foreign[2]]);
+          pendingReferences.push([
+            name,
+            field,
+            foreign[1],
+            foreign[2],
+            optional || empty.includes(undefined)
+              ? "undefined"
+              : empty.includes(null)
+                ? "null"
+                : undefined,
+          ]);
           byPlaceholder.set(field, foreign[2]);
           if (optional || empty.length) emptyable.add(field);
         } else {
@@ -470,6 +491,7 @@ export const createRegistry = (
     field,
     targetName,
     placeholder,
+    unset,
   ] of pendingReferences) {
     const source = parsed.get(sourceName)!;
     const target = parsed.get(targetName);
@@ -499,7 +521,13 @@ export const createRegistry = (
       fields[other] = holder;
     }
 
-    const reference = { field, target: targetName, placeholder, fields };
+    const reference: Reference = {
+      field,
+      target: targetName,
+      placeholder,
+      fields,
+      ...(unset && { unset }),
+    };
     source.references.push(reference);
     target.incoming.push({ source, reference });
   }

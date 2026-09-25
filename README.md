@@ -436,6 +436,15 @@ await db.delete(le.key); // KrvReferenceError: referenced by books/…
 await db.delete(le.key, { cascade: true }); // deletes her books too
 ```
 
+`cascade: "unset"` keeps the referencing rows where it can: an optional
+reference (`"authorId?"`) becomes `undefined`, a nullable one
+(`["{authors.authorId}", null]`) becomes `null`, and `updatedAt` changes.
+Rows whose reference is required are deleted, as with `cascade: true`.
+
+```ts
+await db.delete(le.key, { cascade: "unset" }); // her books stay, without authorId
+```
+
 - `"authorId?": "{authors.authorId}"` or `["{authors.authorId}", null]` makes
   it optional.
 - Changing a row's key (`set` with a new `id`) moves it, and references
@@ -722,7 +731,7 @@ manages the data and no file is written, so pass `secrets`.
 | `insert(literals, value, { raw? })`                                 | New row; returns `{ key, value }`                                                                                 |
 | `update(key, patch \| (row) => patch, { check?, raw? })`            | Partial update, merged atomically; returns the row                                                                |
 | `set(key, value, { check?, raw? })`                                 | Create or replace; `check` a versionstamp for optimistic concurrency; `raw` fields are written as stored          |
-| `delete(key, { cascade? })`                                         | Delete; `cascade` deletes referencing rows                                                                        |
+| `delete(key, { cascade? })`                                         | Delete; `cascade` deletes referencing rows, `"unset"` clears their optional references                            |
 | `list(literals, { where, filter, limit, reverse, values, expand })` | Rows: await for an array or `for await` to stream; `values: false` for entries                                    |
 | `find(literals, { where, filter, reverse, values, expand })`        | First matching row, or `null`                                                                                     |
 | `compare(key, field, plain)`                                        | Check a plain value against a transformed field                                                                   |

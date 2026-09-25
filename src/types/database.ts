@@ -204,7 +204,8 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
    * @param key Full row key.
    * @param options
    *   - `cascade`: also delete every row referencing this one, recursively.
-   *     Without it, deleting a referenced row throws.
+   *     Without it, deleting a referenced row throws. `"unset"` clears
+   *     optional or nullable references instead of deleting their rows.
    *   - `check`: only delete if the row's current versionstamp matches.
    * @throws KrvReferenceError if the row is referenced and `cascade` is not set.
    * @throws KrvConflictError if `check` fails.
@@ -213,6 +214,7 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
    * ```ts
    * await db.delete(["posts", postId]);
    * await db.delete(["users", userId], { cascade: true }); // and their posts
+   * await db.delete(["users", userId], { cascade: "unset" }); // posts.userId?
    * ```
    */
   delete: <const Key extends KrvAnyKey<Tables>>(

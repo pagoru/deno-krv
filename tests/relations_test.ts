@@ -358,6 +358,75 @@ Deno.test(
   },
 );
 
+Deno.test(
+  'delete: cascade "unset" clears optional references, deletes the rest',
+  async () => {
+    const db = await openKRV({
+      path: ":memory:",
+      tables: [
+        table({
+          key: ["accounts", "{accountId}"],
+          schema: { id: "{accountId}", name: "string" },
+        }),
+        table({
+          // Optional to the account, required to the post: deleted with it
+          // (declared first, so it's queued to be unset before that).
+          key: ["comments", "{commentId}"],
+          schema: {
+            id: "{commentId}",
+            "accountId?": "{accounts.accountId}",
+            postId: "{posts.postId}",
+          },
+        }),
+        table({
+          key: ["posts", "{postId}"],
+          schema: { id: "{postId}", authorId: "{accounts.accountId}" },
+        }),
+        table({
+          key: ["codes", "{codeId}"],
+          schema: { id: "{codeId}", "accountId?": "{accounts.accountId}" },
+          indexes: { byAccount: { fields: ["accountId"], unique: true } },
+        }),
+        table({
+          key: ["gifts", "{giftId}"],
+          schema: {
+            id: "{giftId}",
+            accountId: ["{accounts.accountId}", null],
+          },
+        }),
+      ],
+    });
+    const alice = await db.insert(["accounts"], { name: "alice" });
+    const accountId = alice.value.id;
+    const post = await db.insert(["posts"], { authorId: accountId });
+    const code = await db.insert(["codes"], { accountId });
+    const gift = await db.insert(["gifts"], { accountId });
+    const comment = await db.insert(["comments"], {
+      accountId,
+      postId: post.value.id,
+    });
+
+    await db.delete(alice.key, { cascade: "unset" });
+
+    assertEquals((await db.get(post.key)).value, null);
+    assertEquals((await db.get(comment.key)).value, null);
+
+    const codeAfter = (await db.get(code.key)).value!;
+    assert("accountId" in codeAfter);
+    assertEquals(codeAfter.accountId, undefined);
+    assert(codeAfter.updatedAt >= code.value.updatedAt);
+    assertEquals((await db.get(gift.key)).value!.accountId, null);
+
+    // Indexes and references follow: the account can come back, and its id
+    // is free again in the unique index.
+    const again = await db.insert(["accounts"], { id: accountId, name: "a" });
+    assertEquals(await db.list(["codes"], { where: { accountId } }), []);
+    await db.insert(["codes"], { accountId });
+    await db.delete(again.key, { cascade: "unset" });
+    db.close();
+  },
+);
+
 Deno.test("delete: cascade through nested keys", async () => {
   await using db = await openMemory();
   const { alice } = await seed(db);
