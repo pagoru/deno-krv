@@ -8,7 +8,9 @@ import {
   table,
 } from "../src/main.ts";
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Waits until `Date.now()` is past `time`. */
+const sleepUntil = (time: number) =>
+  new Promise((r) => setTimeout(r, Math.max(0, time - Date.now() + 1)));
 
 const tables = [
   table({
@@ -102,12 +104,12 @@ Deno.test("expireAt: expireIn is saved as a timestamp and kept", async () => {
 Deno.test("expireAt: passed in the value, the row expires then", async () => {
   using t = await open();
   const { db } = t;
-  const { key } = await db.insert(["accounts"], {
-    username: "a",
-    expireAt: Date.now() + 50,
-  });
-  assert((await db.get(key)).value);
-  await sleep(80);
+  const expireAt = Date.now() + 200;
+  const { key } = await db.insert(["accounts"], { username: "a", expireAt });
+  const before = (await db.get(key)).value;
+  // Only certain if the read happened in time (slow runners).
+  if (Date.now() < expireAt) assert(before);
+  await sleepUntil(expireAt);
   // Hidden once past, even before Deno KV removes it.
   assertEquals((await db.get(key)).value, null);
   assertEquals(await db.list(["accounts"]), []);
@@ -260,9 +262,15 @@ for (const expired of [false, true]) {
       const { db, kv } = t;
       const { account, post, comment, code, gift } = await seed(db);
 
-      await db.delete(account.key, { soft: 50 });
-      assertEquals(await db.purge(), 0); // not yet
-      await sleep(80);
+      // purgeAt is between `start + soft` and `deleted + soft`.
+      const soft = 200;
+      const start = Date.now();
+      await db.delete(account.key, { soft });
+      const deleted = Date.now();
+      const early = await db.purge();
+      // Not due yet, if this ran in time (slow runners).
+      if (Date.now() <= start + soft) assertEquals(early, 0);
+      await sleepUntil(deleted + soft);
       if (expired) {
         // What Deno KV does by itself, some time after expireAt.
         for (const key of [account.key, post.key, comment.key]) {
