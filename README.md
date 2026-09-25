@@ -168,7 +168,7 @@ A schema maps field names to types. Modifiers go on the **name**:
 | `[a, b]`                                              | Union (`[x, undefined]` makes it optional) |
 | `{ … }`                                               | Nested object; unknown fields are rejected |
 | `"{placeholder}"`                                     | Key field                                  |
-| `"{table.placeholder}"`                               | Reference to another table                 |
+| `"{table.placeholder}"`                               | Reference to another table (also in keys)  |
 
 ### Row types
 
@@ -354,7 +354,8 @@ deterministic transform: the index is keyed by the hash of the plain value, and
 `where: { phone }` hashes the searched value the same way. The row only holds
 the encrypted phone. Without such an index, searching it is a compile error.
 The built-in `#` is keyed (HMAC), so the hash of a phone number can't be
-guessed without the key.
+guessed without the key. With `using: "~"`, an encrypted field is searched
+ignoring case (`"a@B.c"` finds `"A@b.c"`) and read back as it was written.
 
 ---
 
@@ -473,6 +474,29 @@ await db.delete(le.key, { cascade: "unset" }); // her books stay, without author
   it optional.
 - Changing a row's key (`set` with a new `id`) moves it, and references
   follow.
+
+**Keyed by a reference**: a key part can be a reference too, for a subtable
+with one row per row of another. Its field is the same reference:
+
+```ts
+{
+  key: ["accounts", "otp", "{accounts.accountId}"],
+  schema: {
+    accountId: "{accounts.accountId}",
+    verified: "boolean",
+    "secret&": "string",
+  },
+}
+```
+
+```ts
+await db.insert(["accounts", "otp"], { accountId, verified: false, secret });
+await db.get(["accounts", "otp", accountId]);
+```
+
+It's a reference like any other (it must exist, deletes cascade), and it's
+the row's key, so there's one per account. `list(["accounts"])` doesn't
+include them.
 
 ---
 
