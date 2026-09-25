@@ -23,7 +23,7 @@ const hex = (bytes: Uint8Array) =>
 /** `<path>.secrets`: header, 32-byte key, 32-byte pepper. */
 export const secretsPath = (path: string) => `${path}.secrets`;
 
-const decode = (file: string, bytes: Uint8Array): KrvSecrets => {
+export const decodeSecrets = (file: string, bytes: Uint8Array): KrvSecrets => {
   if (
     bytes.length !== FILE_LENGTH ||
     MAGIC.some((byte, i) => bytes[i] !== byte)
@@ -40,6 +40,27 @@ const decode = (file: string, bytes: Uint8Array): KrvSecrets => {
   return { key: hex(key), pepper: hex(pepper) };
 };
 
+const unhex = (text: string) =>
+  Uint8Array.from(text.match(/../g) ?? [], (byte) => parseInt(byte, 16));
+
+/**
+ * The bytes of a secrets file holding `secrets`: only secrets made by krv
+ * (32 bytes each, as hex) fit in one.
+ */
+export const encodeSecrets = ({ key, pepper }: KrvSecrets) => {
+  if (![key, pepper].every((s) => /^[0-9a-f]{64}$/.test(s))) {
+    throw new Error(
+      "These secrets can't be kept in a .secrets file (not 32 bytes of hex): pass them to openKRV as `secrets`",
+    );
+  }
+  const bytes = new Uint8Array(FILE_LENGTH);
+  bytes.set(MAGIC);
+  bytes[MAGIC.length] = VERSION;
+  bytes.set(unhex(key), HEADER_LENGTH);
+  bytes.set(unhex(pepper), HEADER_LENGTH + SECRET_LENGTH);
+  return bytes;
+};
+
 /** New random secrets, as the bytes of a secrets file. */
 const generate = () => {
   const bytes = new Uint8Array(FILE_LENGTH);
@@ -52,13 +73,13 @@ const generate = () => {
 /** Reads the secrets file, creating it (owner-only) if missing. */
 const readOrCreate = async (file: string): Promise<KrvSecrets> => {
   try {
-    return decode(file, await Deno.readFile(file));
+    return decodeSecrets(file, await Deno.readFile(file));
   } catch (error) {
     if (!(error instanceof Deno.errors.NotFound)) throw error;
   }
   const bytes = generate();
   await Deno.writeFile(file, bytes, { createNew: true, mode: 0o600 });
-  return decode(file, bytes);
+  return decodeSecrets(file, bytes);
 };
 
 /**
@@ -79,6 +100,6 @@ export const loadSecrets = async (
   if (given) return given;
   if (!needed) return {};
   if (isFilePath(path)) return await readOrCreate(secretsPath(path));
-  if (path === ":memory:") return decode(path, generate());
+  if (path === ":memory:") return decodeSecrets(path, generate());
   return {};
 };

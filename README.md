@@ -50,6 +50,7 @@ await db.delete(["notes", note.id]);
 - [Reading: `where` and `filter`](#reading-where-and-filter)
 - [Migrations](#migrations)
 - [Schema changes](#schema-changes)
+- [Backups](#backups)
 - [Files on disk](#files-on-disk)
 - [API reference](#api-reference)
 - [Errors](#errors)
@@ -788,6 +789,40 @@ Table "todos": 3 invalid row(s)
 
 ---
 
+## Backups
+
+`db.backup(password)` gives one file, as bytes: a consistent copy of the
+database and its secrets (the `.secrets` file), compressed and encrypted
+with the password. It's taken while the database stays open and writing.
+`db.restoreBackup(bytes, password)` puts it back:
+
+```ts
+import { ulid } from "@std/ulid";
+
+const id = ulid();
+const bytes = await db.backup(Deno.env.get("BACKUP_PASSWORD")!);
+await s3.putObject(`backups/${id}.krvb`, bytes); // anywhere: S3, disk…
+
+const saved = await s3.getObject(`backups/${id}.krvb`);
+await db.restoreBackup(saved, Deno.env.get("BACKUP_PASSWORD")!);
+```
+
+- The password is checked first: if it's wrong or the bytes were altered,
+  it throws and nothing changes. Each backup gets its own key (PBKDF2 with a
+  random salt, then AES-256-GCM).
+- Restoring closes the database, replaces the file and `.secrets`, and opens
+  it again under the lock. An older backup gets the migrations it's missing
+  (with their events), as on `openKRV`.
+- Operations in flight while it restores may fail. Other processes with the
+  same file open keep the old data until they reopen it.
+- It needs a database file: `":memory:"` and remote databases can't be backed
+  up this way. With `secrets` passed to `openKRV`, the backup must have the
+  same ones.
+- Anyone with a backup and its password has the data and the secrets: keep
+  the password out of the backups' storage.
+
+---
+
 ## Files on disk
 
 With `path: "./app.db"`:
@@ -799,6 +834,7 @@ With `path: "./app.db"`:
 | `app.db-wal`, `app.db-shm`        | SQLite's journal                          | While open; removed on `close()`     |
 | `app.db.lock`                     | Only one process opens or migrates        | While `openKRV` runs                 |
 | `app.db.backup` (+ `-wal`/`-shm`) | Copy taken before migrating               | While migrating; restored on failure |
+| `app.db.snapshot`                 | Copy taken by `db.backup()`               | While `backup()` runs                |
 
 Keep `app.db` and `app.db.secrets` together, backed up, and out of git:
 
@@ -826,6 +862,8 @@ manages the data and no file is written, so pass `secrets`.
 | `purge()`                                                           | Delete soft-deleted rows whose time is up for good, clearing references to them                                     |
 | `list(literals, { where, filter, limit, reverse, values, expand })` | Rows: await for an array or `for await` to stream; `values: false` for entries                                      |
 | `find(literals, { where, filter, reverse, values, expand })`        | First matching row, or `null`                                                                                       |
+| `backup(password)`                                                  | The database and its secrets, encrypted, as bytes                                                                   |
+| `restoreBackup(bytes, password)`                                    | Replace the data and secrets with a backup's, then run missing migrations                                           |
 | `compare(key, field, plain)`                                        | Check a plain value against a transformed field                                                                     |
 | `close()`                                                           | Close the database                                                                                                  |
 
