@@ -115,7 +115,11 @@ export const softOfKey = (table: string, key: KrvKey) => [
 
 type Row = Record<string, unknown>;
 
-export type KeyPattern = ({ literal: string } | { placeholder: string })[];
+export type KeyPattern = (
+  | { literal: string }
+  /** `reference`: set for `{table.placeholder}` parts, held by a reference field. */
+  | { placeholder: string; reference?: string }
+)[];
 
 export type Reference = {
   field: string;
@@ -177,8 +181,9 @@ const parsePattern = (name: string, key: readonly string[]): KeyPattern => {
 
   const seen = new Set<string>();
   return key.map((part) => {
-    const match = PLACEHOLDER.exec(part);
-    if (!match) {
+    const own = PLACEHOLDER.exec(part);
+    const foreign = own ? null : REFERENCE.exec(part);
+    if (!own && !foreign) {
       if (part.startsWith("{")) {
         throw new KrvSchemaError(
           `Table "${name}": invalid key placeholder "${part}"`,
@@ -186,13 +191,14 @@ const parsePattern = (name: string, key: readonly string[]): KeyPattern => {
       }
       return { literal: part };
     }
-    if (seen.has(match[1])) {
+    const placeholder = own ? own[1] : foreign![2];
+    if (seen.has(placeholder)) {
       throw new KrvSchemaError(
-        `Table "${name}": duplicate key placeholder "${part}"`,
+        `Table "${name}": duplicate key placeholder {${placeholder}}`,
       );
     }
-    seen.add(match[1]);
-    return { placeholder: match[1] };
+    seen.add(placeholder);
+    return foreign ? { placeholder, reference: foreign[1] } : { placeholder };
   });
 };
 
@@ -262,10 +268,9 @@ export const createRegistry = (
           `parts, so insert, list and references can't tell them apart`,
       );
     }
-    const placeholders = pattern.flatMap((p) =>
-      "placeholder" in p ? [p.placeholder] : [],
-    );
     const byPlaceholder = new Map<string, string>();
+    /** Reference field → the table it references. */
+    const referenced = new Map<string, string>();
     const generated: string[] = [];
     const bindings: Record<string, string> = {};
     /** Reference fields that may be empty, so they can't hold a key part. */
@@ -342,7 +347,16 @@ export const createRegistry = (
               `${name}.${field}: a key field can't be optional or null`,
             );
           }
-          if (!placeholders.includes(own[1])) {
+          const part = pattern.find(
+            (p) => "placeholder" in p && p.placeholder === own[1],
+          ) as { placeholder: string; reference?: string } | undefined;
+          if (part?.reference) {
+            throw new KrvSchemaError(
+              `${name}.${field}: key part {${part.reference}.${own[1]}} is a reference, ` +
+                `so its field must be "{${part.reference}.${own[1]}}"`,
+            );
+          }
+          if (!part) {
             throw new KrvSchemaError(
               `${name}.${field}: "${ref}" is not a placeholder of key ${table.key.join(
                 "/",
@@ -365,6 +379,7 @@ export const createRegistry = (
                 : undefined,
           ]);
           byPlaceholder.set(field, foreign[2]);
+          referenced.set(field, foreign[1]);
           if (optional || empty.length) emptyable.add(field);
         } else {
           throw new KrvSchemaError(
@@ -498,12 +513,23 @@ export const createRegistry = (
 
     // A key placeholder not held by an own field may come from a reference
     // with the same placeholder name, e.g. `orgId: "{orgs.orgId}"`.
-    for (const placeholder of placeholders) {
+    // A `{table.placeholder}` key part is held by the field referencing
+    // exactly that, e.g. `accountId: "{accounts.accountId}"`.
+    for (const part of pattern) {
+      if (!("placeholder" in part)) continue;
+      const { placeholder, reference } = part;
       if (entry.bindings[placeholder]) continue;
-      const field = [...byPlaceholder].find(([, p]) => p === placeholder)?.[0];
+      const field = [...byPlaceholder].find(
+        ([f, p]) =>
+          p === placeholder &&
+          (reference === undefined || referenced.get(f) === reference),
+      )?.[0];
       if (!field) {
         throw new KrvSchemaError(
-          `Table "${name}": key placeholder {${placeholder}} has no schema field`,
+          reference === undefined
+            ? `Table "${name}": key placeholder {${placeholder}} has no schema field`
+            : `Table "${name}": key part {${reference}.${placeholder}} needs a ` +
+                `field "{${reference}.${placeholder}}" in the schema`,
         );
       }
       if (emptyable.has(field)) {

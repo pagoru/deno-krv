@@ -842,6 +842,39 @@ Deno.test(
 );
 
 Deno.test(
+  'using: "~" on an encrypted field searches ignoring case',
+  async () => {
+    const db = await openKRV({
+      path: ":memory:",
+      tables: [
+        table({
+          key: ["accounts", "{accountId}"],
+          schema: { id: "{accountId}", "email&": "string" },
+          indexes: { byEmail: { fields: ["email"], using: "~", unique: true } },
+        }),
+      ],
+    });
+    const a = await db.insert(["accounts"], { email: "A@b.C" });
+
+    for (const email of ["A@b.C", "a@b.c", "A@B.c"]) {
+      const found = await db.find(["accounts"], { where: { email } });
+      assertEquals(found?.id, a.value.id, email);
+      assertEquals(found?.email, "A@b.C"); // read back as written
+    }
+    assertEquals(
+      await db.find(["accounts"], { where: { email: "x@b.c" } }),
+      null,
+    );
+    await assertRejects(
+      () => db.insert(["accounts"], { email: "a@B.c" }),
+      KrvConflictError,
+      "byEmail",
+    );
+    db.close();
+  },
+);
+
+Deno.test(
   "using: unique, updates and deletes follow the plain value",
   async () => {
     const db = await openMembers();

@@ -154,6 +154,28 @@ Deno.test("keys: invalid table definitions are rejected at open", async () => {
       ],
       "is not a key placeholder",
     ],
+    [
+      [
+        table({ key: ["x", "{id}"], schema: { id: "{id}" } }),
+        table({ key: ["y", "{x.id}"], schema: { name: "string" } }),
+      ],
+      'needs a field "{x.id}"',
+    ],
+    [
+      [
+        table({ key: ["x", "{id}"], schema: { id: "{id}" } }),
+        table({ key: ["y", "{x.id}"], schema: { id: "{id}" } }),
+      ],
+      "is a reference",
+    ],
+    [
+      [
+        table({ key: ["x", "{id}"], schema: { id: "{id}" } }),
+        table({ key: ["z", "{id}"], schema: { id: "{id}" } }),
+        table({ key: ["y", "{x.id}"], schema: { id: "{z.id}" } }),
+      ],
+      'needs a field "{x.id}"',
+    ],
   ];
 
   for (const [tables, message] of cases) {
@@ -164,6 +186,54 @@ Deno.test("keys: invalid table definitions are rejected at open", async () => {
       message,
     );
   }
+});
+
+Deno.test("keys: a key part can be a reference to another table", async () => {
+  const accounts = table({
+    key: ["accounts", "{accountId}"],
+    schema: { accountId: "{accountId}", email: "string" },
+  });
+  const accountsOTP = table({
+    key: ["accounts", "otp", "{accounts.accountId}"],
+    schema: {
+      accountId: "{accounts.accountId}",
+      verified: "boolean",
+      "secret&": "string",
+    },
+  });
+  const db = await openKRV({
+    path: ":memory:",
+    tables: [accounts, accountsOTP],
+  });
+
+  const account = await db.insert(["accounts"], { email: "a@b.c" });
+  const id = account.value.accountId;
+  const otp = await db.insert(["accounts", "otp"], {
+    accountId: id,
+    verified: false,
+    secret: "s3cret",
+  });
+  assertEquals(otp.key, ["accounts", "otp", id]);
+  assertEquals((await db.get(["accounts", "otp", id])).value?.secret, "s3cret");
+
+  // Each table only lists its own rows.
+  assertEquals(await count(db.list(["accounts"])), 1);
+  assertEquals(await count(db.list(["accounts", "otp"])), 1);
+
+  // It's a reference: it must exist, and deletes cascade.
+  await assertRejects(
+    () =>
+      db.insert(["accounts", "otp"], {
+        accountId: "nobody",
+        verified: false,
+        secret: "x",
+      }),
+    KrvReferenceError,
+  );
+  await assertRejects(() => db.delete(account.key), KrvReferenceError);
+  await db.delete(account.key, { cascade: true });
+  assertEquals((await db.get(otp.key)).value, null);
+  db.close();
 });
 
 Deno.test(

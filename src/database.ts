@@ -12,6 +12,7 @@ import type {
   KrvListOptions,
   KrvSetOptions,
   KrvTables,
+  KrvTransform,
   KrvUpdateOptions,
 } from "./types/main.ts";
 import {
@@ -1282,12 +1283,47 @@ export const createDatabase = <Tables extends KrvTables, E>(
       // compared once loaded (encrypted ones, found through a `using` index).
       const stored: Row = {};
       const loaded: Row = {};
+      // Loaded fields also match through their indexes' `using` transforms
+      // (`using: "~"` finds "A@b.c" by "a@B.C"): transform → searched value.
+      const loadedUsing = new Map<
+        string,
+        { transform: KrvTransform; value: unknown }[]
+      >();
       for (const [field, value] of Object.entries(plainWhere)) {
         if (value === undefined) continue;
         const t = table.transformed.find((t) => t.field === field);
-        if (t && !t.transform.deterministic) loaded[field] = value;
-        else stored[field] = await saveWhereValue(table, field, value);
+        if (t && !t.transform.deterministic) {
+          loaded[field] = value;
+          const usings = new Set(
+            table.indexes.flatMap((i) => i.using[field] ?? []),
+          );
+          loadedUsing.set(
+            field,
+            await Promise.all(
+              [...usings].map(async (transform) => ({
+                transform,
+                value: await transform.save(value),
+              })),
+            ),
+          );
+        } else stored[field] = await saveWhereValue(table, field, value);
       }
+      const matchesLoaded = async (value: Row) => {
+        for (const [field, expected] of Object.entries(loaded)) {
+          if (matchesWhere(value[field], expected)) continue;
+          if (value[field] === undefined || value[field] === null) return false;
+          let found = false;
+          for (const using of loadedUsing.get(field) ?? []) {
+            const saved = await using.transform.save(value[field]);
+            if (matchesWhere(saved, using.value)) {
+              found = true;
+              break;
+            }
+          }
+          if (!found) return false;
+        }
+        return true;
+      };
 
       // Rows are expanded in batches, so forward expands share reads.
       let batch: { entry: KrvEntry<Row>; value: Row }[] = [];
@@ -1320,10 +1356,7 @@ export const createDatabase = <Tables extends KrvTables, E>(
           continue;
 
         const value = await loadRow(table, entry.value);
-        if (
-          !Object.entries(loaded).every(([f, v]) => matchesWhere(value[f], v))
-        )
-          continue;
+        if (!(await matchesLoaded(value))) continue;
         if (view) {
           await view(table, value);
           // A reference to a soft-deleted row no longer matches.
