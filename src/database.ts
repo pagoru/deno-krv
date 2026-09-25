@@ -922,7 +922,28 @@ export const createDatabase = <Tables extends KrvTables, E>(
       if (attempt > 0) await backoff(attempt);
 
       const current = await state.kv.get<Row>(key);
-      if (current.versionstamp === null) throw new KrvNotFoundError(key);
+      if (current.versionstamp === null) {
+        if (!options.insert) throw new KrvNotFoundError(key);
+        if (options.check !== undefined) throw new KrvConflictError(key);
+        // Insert the patch as a new row; key fields come from the key.
+        const value =
+          typeof patch === "function" ? patch(null as never) : patch;
+        try {
+          const result = await write(key, value, {
+            check: null,
+            expireIn: options.expireIn,
+            raw: options.raw,
+          });
+          return written(table, result, options.values);
+        } catch (error) {
+          // Created in between: merge into it instead.
+          const now = await state.kv.get(key);
+          if (error instanceof KrvConflictError && now.versionstamp !== null) {
+            continue;
+          }
+          throw error;
+        }
+      }
       if (
         options.check !== undefined &&
         current.versionstamp !== options.check
@@ -967,6 +988,26 @@ export const createDatabase = <Tables extends KrvTables, E>(
     validate(table, row, rawFields(table, options.raw, row));
 
     const key = registry.rowKey(table, row);
+    if (options.update) {
+      // Merged into an existing row, or inserted: `update` with `insert`.
+      // Only the value and its key fields: an existing row keeps its
+      // generated fields and createdAt.
+      const patch = { ...value };
+      for (const field of Object.values(table.bindings))
+        patch[field] = row[field];
+      return await (
+        update as unknown as (
+          key: KrvKey,
+          patch: Row,
+          options: KrvUpdateOptions,
+        ) => Promise<unknown>
+      )(key, patch, {
+        insert: true,
+        expireIn: options.expireIn,
+        raw: options.raw,
+        values: options.values,
+      });
+    }
     const result = await write(key, row, { ...options, check: null });
     return written(table, result, options.values);
   }) as unknown as KrvDatabase<Tables, E>["insert"];

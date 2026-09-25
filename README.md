@@ -616,6 +616,29 @@ await db.update(["posts", id], (post) => ({ views: post.views + 1 }));
 - Everything else works as `set`: validation, transforms, indexes, relations
   and `updatedAt`.
 
+### Insert or update
+
+Both are off by default:
+
+```ts
+// update, inserting the patch as a new row if it doesn't exist
+await db.update(["settings"], { theme: "dark" }, { insert: true });
+await db.update(["counters", "visits"], (c) => ({ n: (c?.n ?? 0) + 1 }), {
+  insert: true, // the function gets null when the row is missing
+});
+
+// insert, merging into the row if one exists at the same key
+await db.insert(["users"], { id: "pagoru", name: "Pablo" }, { update: true });
+```
+
+- With `insert: true`, a missing row is created from the patch (key fields
+  from the key), so the patch must be a complete row. Concurrent upserts
+  create it once and merge the rest.
+- With `update: true`, "exists" means the same key: it matters when the key
+  comes from the value (an explicit `id`, a static table, a table keyed by a
+  reference). A generated id is always new. An existing row keeps its
+  `createdAt` and generated fields.
+
 ---
 
 ## Reading: `where` and `filter`
@@ -875,23 +898,23 @@ manages the data and no file is written, so pass `secrets`.
 
 ## API reference
 
-| Method                                                              | Description                                                                                                         |
-| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `openKRV({ path, tables, … })`                                      | Opens, migrates and checks. Options: `validators`, `transforms`, `migrations`, `events`, `secrets`, `lockTimeout`   |
-| `table({ key, schema, … })`                                         | Optional: keeps a table's types when defined outside `openKRV`. Options: `indexes`, `timestamps`                    |
-| `get(key, { expand?, deleted?, values? })`                          | One row, or `null`; `deleted: true` includes soft-deleted rows                                                      |
-| `insert(literals, value, { raw?, values? })`                        | New row; returns it                                                                                                 |
-| `update(key, patch \| (row) => patch, { check?, raw?, values? })`   | Partial update, merged atomically; returns the row                                                                  |
-| `set(key, value, { check?, raw?, values? })`                        | Create or replace; returns the row. `check` a versionstamp for optimistic concurrency; `raw` fields as stored       |
-| `delete(key, { cascade?, soft? })`                                  | Delete; `cascade` deletes referencing rows, `"unset"` clears their optional references; `soft` hides it for a while |
-| `restore(key)`                                                      | Bring back a soft-deleted row, with the rows soft-deleted with it                                                   |
-| `purge()`                                                           | Delete soft-deleted rows whose time is up for good, clearing references to them                                     |
-| `list(literals, { where, filter, limit, reverse, values, expand })` | Rows: await for an array or `for await` to stream; `values: false` for entries                                      |
-| `find(literals, { where, filter, reverse, values, expand })`        | First matching row, or `null`                                                                                       |
-| `backup(password)`                                                  | The database and its secrets, encrypted, as bytes                                                                   |
-| `restoreBackup(bytes, password)`                                    | Replace the data and secrets with a backup's, then run missing migrations                                           |
-| `compare(key, field, plain)`                                        | Check a plain value against a transformed field                                                                     |
-| `close()`                                                           | Close the database                                                                                                  |
+| Method                                                                     | Description                                                                                                         |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `openKRV({ path, tables, … })`                                             | Opens, migrates and checks. Options: `validators`, `transforms`, `migrations`, `events`, `secrets`, `lockTimeout`   |
+| `table({ key, schema, … })`                                                | Optional: keeps a table's types when defined outside `openKRV`. Options: `indexes`, `timestamps`                    |
+| `get(key, { expand?, deleted?, values? })`                                 | One row, or `null`; `deleted: true` includes soft-deleted rows                                                      |
+| `insert(literals, value, { update?, raw?, values? })`                      | New row; returns it. `update: true` merges into an existing row at that key                                         |
+| `update(key, patch \| (row) => patch, { check?, insert?, raw?, values? })` | Partial update, merged atomically; returns the row. `insert: true` creates it if missing                            |
+| `set(key, value, { check?, raw?, values? })`                               | Create or replace; returns the row. `check` a versionstamp for optimistic concurrency; `raw` fields as stored       |
+| `delete(key, { cascade?, soft? })`                                         | Delete; `cascade` deletes referencing rows, `"unset"` clears their optional references; `soft` hides it for a while |
+| `restore(key)`                                                             | Bring back a soft-deleted row, with the rows soft-deleted with it                                                   |
+| `purge()`                                                                  | Delete soft-deleted rows whose time is up for good, clearing references to them                                     |
+| `list(literals, { where, filter, limit, reverse, values, expand })`        | Rows: await for an array or `for await` to stream; `values: false` for entries                                      |
+| `find(literals, { where, filter, reverse, values, expand })`               | First matching row, or `null`                                                                                       |
+| `backup(password)`                                                         | The database and its secrets, encrypted, as bytes                                                                   |
+| `restoreBackup(bytes, password)`                                           | Replace the data and secrets with a backup's, then run missing migrations                                           |
+| `compare(key, field, plain)`                                               | Check a plain value against a transformed field                                                                     |
+| `close()`                                                                  | Close the database                                                                                                  |
 
 Also exported:
 

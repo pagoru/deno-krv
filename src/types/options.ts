@@ -32,6 +32,12 @@ export type KrvSetOptions<Field extends string = string> = {
 
 export type KrvInsertOptions<Field extends string = string> = {
   expireIn?: number;
+  /**
+   * If a row already exists at the value's key, merge the value into it (as
+   * `update` does) instead of throwing. Only matters when the key comes from
+   * the value (an explicit id, a static table…). Default `false`.
+   */
+  update?: boolean;
   /** `false`: return the `{ key, value, versionstamp }` entry instead of just the row. Default `true`. */
   values?: boolean;
   /**
@@ -90,6 +96,12 @@ export type KrvListOptions<Row, Where = { [K in keyof Row]?: Row[K] }> = {
 export type KrvUpdateOptions<Field extends string = string> = {
   /** Only update if the row's current versionstamp matches. */
   check?: string;
+  /**
+   * If the row doesn't exist, insert the patch as a new row (key fields from
+   * the key) instead of throwing `KrvNotFoundError`. A function patch then
+   * receives `null`. Default `false`.
+   */
+  insert?: boolean;
   /** `false`: return the `{ key, value, versionstamp }` entry instead of just the row. Default `true`. */
   values?: boolean;
   expireIn?: number;
