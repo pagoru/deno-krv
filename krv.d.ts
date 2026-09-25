@@ -64,9 +64,12 @@ export type KrvDeleteOptions = {
   check?: string | null;
   /**
    * Also delete every row that references this one, recursively.
-   * Without it, deleting a referenced row throws (restrict).
+   * Without it, deleting a referenced row throws (restrict). `"unset"`
+   * clears the reference instead of deleting the row, where the field can be
+   * empty: optional ones become undefined, `["{t.id}", null]` ones null.
+   * Rows whose reference is required are still deleted.
    */
-  cascade?: boolean;
+  cascade?: boolean | "unset";
 };
 export type KrvListOptions<
   Row,

@@ -4,6 +4,7 @@ import type {
   KrvDatabase,
   KrvEntry,
   KrvExpandSpec,
+  KrvDeleteOptions,
   KrvGetOptions,
   KrvInsertOptions,
   KrvKey,
@@ -313,17 +314,28 @@ export const createDatabase = <Tables extends KrvTables, E>(
     }
   };
 
+  /** A row whose references to deleted rows are cleared (`cascade: "unset"`). */
+  type Unset = {
+    table: ParsedTable;
+    key: KrvKey;
+    before: Row;
+    after: Row;
+  };
+
   /**
    * Adds deleting `key` to `batch`. Rows referencing it are deleted too when
-   * `cascade` is set; otherwise their existence throws.
+   * `cascade` is set; otherwise their existence throws. With `"unset"`, rows
+   * whose reference can be empty are collected in `unsets` instead, to be
+   * written once every delete is planned (a delete of the same row wins).
    */
   const planDelete = async (
     batch: WriteBatch,
     table: ParsedTable,
     key: KrvKey,
     row: Row,
-    cascade: boolean,
+    cascade: KrvDeleteOptions["cascade"],
     visited: Set<string>,
+    unsets: Map<string, Unset>,
   ) => {
     if (visited.has(keyId(key))) return;
     visited.add(keyId(key));
@@ -366,6 +378,22 @@ export const createDatabase = <Tables extends KrvTables, E>(
           batch.delete(entry.key); // stale index entry
           continue;
         }
+        batch.check(childKey, child.versionstamp);
+
+        if (cascade === "unset" && reference.unset) {
+          const id = keyId(childKey);
+          const unset = unsets.get(id) ?? {
+            table: source,
+            key: childKey,
+            before: child.value,
+            after: { ...child.value },
+          };
+          unset.after[reference.field] =
+            reference.unset === "null" ? null : undefined;
+          unsets.set(id, unset);
+          continue;
+        }
+
         await planDelete(
           batch,
           source,
@@ -373,6 +401,7 @@ export const createDatabase = <Tables extends KrvTables, E>(
           child.value,
           cascade,
           visited,
+          unsets,
         );
       }
     }
@@ -696,7 +725,31 @@ export const createDatabase = <Tables extends KrvTables, E>(
       if (current.versionstamp === null) return;
 
       const batch = new WriteBatch().check(key, current.versionstamp);
-      await planDelete(batch, table, key, current.value, cascade, new Set());
+      const unsets = new Map<string, Unset>();
+      await planDelete(
+        batch,
+        table,
+        key,
+        current.value,
+        cascade,
+        new Set(),
+        unsets,
+      );
+      const now = Date.now();
+      for (const { table, key, before, after } of unsets.values()) {
+        if (batch.pending(key) === "delete") continue;
+        if (table.timestamps) after.updatedAt = now;
+        await planWrite(
+          batch,
+          table,
+          key,
+          before,
+          after,
+          undefined,
+          new Set(),
+          now,
+        );
+      }
 
       const result = await commitWithLockRetry(() => batch.build(state.kv));
       if (result.ok) return;
