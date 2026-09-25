@@ -157,12 +157,14 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
    * @param patch A partial row, or `(row) => partial row`.
    * @param options
    *   - `check`: only update if the row's current versionstamp matches.
+   *   - `insert`: insert the patch as a new row if it doesn't exist (a
+   *     function patch then gets `null`). Default `false`.
    *   - `expireIn`: milliseconds until the row expires.
    *   - `raw`: transformed fields whose values are already stored (a hash,
    *     ciphertext…), written as they are instead of transformed again.
    * @returns The updated row, or with `values: false` the
    *   `{ key, value, versionstamp }` entry (the new key if it moved).
-   * @throws KrvNotFoundError if the row doesn't exist.
+   * @throws KrvNotFoundError if the row doesn't exist (without `insert`).
    * @throws KrvValidationError, KrvConflictError, KrvReferenceError as `set`.
    *
    * @example
@@ -174,15 +176,19 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
   update: <
     const Key extends KrvAnyKey<Tables>,
     const Values extends boolean = true,
+    const Insert extends boolean = false,
   >(
     key: Key,
     patch:
       | KrvPatch<KrvInputAt<Tables, E, Key>>
       | ((
-          row: KrvValueAt<Tables, E, Key>,
+          row: Insert extends true
+            ? KrvValueAt<Tables, E, Key> | null
+            : KrvValueAt<Tables, E, Key>,
         ) => KrvPatch<KrvInputAt<Tables, E, Key>>),
     options?: KrvUpdateOptions<KrvFieldAt<Tables, E, Key>> & {
       values?: Values;
+      insert?: Insert;
     },
   ) => Promise<KrvWritten<Values, KrvValueAt<Tables, E, Key>, Key>>;
 
@@ -195,13 +201,16 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
    *   `["orgs", "{orgId}", "members", "{memberId}"]`.
    * @param value The row. Validated against the table's schema.
    * @param options
+   *   - `update`: if a row exists at the value's key, merge the value into
+   *     it instead of throwing. Default `false`.
    *   - `expireIn`: milliseconds until the row expires.
    *   - `raw`: transformed fields whose values are already stored (a hash,
    *     ciphertext…), written as they are instead of transformed again.
    * @returns The row (including generated fields and timestamps), or with
    *   `values: false` the `{ key, value, versionstamp }` entry.
    * @throws KrvValidationError if `value` doesn't match the schema.
-   * @throws KrvConflictError if the key or a unique index value is taken.
+   * @throws KrvConflictError if the key (without `update`) or a unique index
+   *   value is taken.
    * @throws KrvReferenceError if a reference points at a missing row.
    *
    * @example

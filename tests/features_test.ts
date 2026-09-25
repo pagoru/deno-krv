@@ -1274,3 +1274,120 @@ Deno.test("tables: optional, so a database can start without any", async () => {
   const defined = await openKRV({ ...config, path: ":memory:" });
   defined.close();
 });
+
+// ---- Upserts: update { insert } and insert { update } ----
+
+Deno.test(
+  "update: insert: true inserts a missing row, merges an existing one",
+  async () => {
+    const db = await open();
+    await assertRejects(
+      () => db.update(["config"], { maintenance: true }),
+      KrvNotFoundError,
+    );
+
+    assertEquals(
+      await db.update(["config"], { maintenance: true }, { insert: true }),
+      { maintenance: true },
+    );
+    assertEquals(
+      await db.update(["config"], { maintenance: false }, { insert: true }),
+      { maintenance: false },
+    );
+
+    // A function patch receives null when the row is missing.
+    const created = await db.update(
+      ["accounts", "pagoru"],
+      (row) =>
+        row
+          ? { verified: !row.verified }
+          : {
+              emailHash: "p@x.dev",
+              email: "p@x.dev",
+              password: "12345678",
+              verified: false,
+            },
+      { insert: true },
+    );
+    assertEquals([created.id, created.verified], ["pagoru", false]);
+    const toggled = await db.update(
+      ["accounts", "pagoru"],
+      (row) => ({ verified: !row!.verified }),
+      { insert: true },
+    );
+    assertEquals(toggled.verified, true);
+    db.close();
+  },
+);
+
+Deno.test(
+  "update: concurrent upserts insert once and lose no updates",
+  async () => {
+    const db = await open();
+    await Promise.all(
+      Array.from({ length: 20 }, () =>
+        db.update(
+          ["config"],
+          (c) => ({ maintenance: !(c?.maintenance ?? false) }),
+          { insert: true },
+        ),
+      ),
+    );
+    // Inserted as true, then toggled 19 times.
+    assertEquals(await db.get(["config"]), { maintenance: false });
+    db.close();
+  },
+);
+
+Deno.test(
+  "insert: update: true merges into a row at the same key",
+  async () => {
+    const db = await open();
+    const first = await db.insert(["accounts"], {
+      id: "pagoru",
+      emailHash: "p@x.dev",
+      email: "p@x.dev",
+      password: "12345678",
+      verified: false,
+    });
+    await assertRejects(
+      () =>
+        db.insert(["accounts"], {
+          id: "pagoru",
+          emailHash: "p@x.dev",
+          email: "p@x.dev",
+          password: "12345678",
+          verified: true,
+        }),
+      KrvConflictError,
+    );
+
+    await new Promise((r) => setTimeout(r, 5));
+    const merged = await db.insert(
+      ["accounts"],
+      {
+        id: "pagoru",
+        emailHash: "p@x.dev",
+        email: "p@x.dev",
+        password: "12345678",
+        verified: true,
+        username: "pagoru",
+      },
+      { update: true },
+    );
+    assertEquals([merged.verified, merged.username], [true, "pagoru"]);
+    assertEquals(merged.createdAt, first.createdAt); // kept
+    assert(merged.updatedAt > first.updatedAt);
+    assertEquals((await db.list(["accounts"])).length, 1);
+
+    // A table keyed by a reference: one row per account, however many inserts.
+    await db.insert(["admins"], { accountId: "pagoru" }, { update: true });
+    await db.insert(["admins"], { accountId: "pagoru" }, { update: true });
+    assertEquals((await db.list(["admins"])).length, 1);
+
+    // A generated id is always new: update: true just inserts.
+    await account(db, "other@x.dev");
+    assertEquals((await db.list(["accounts"])).length, 2);
+    db.close();
+  },
+);
