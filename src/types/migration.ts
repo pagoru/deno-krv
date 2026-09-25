@@ -54,6 +54,8 @@ export type KrvUntypedDb = {
     // deno-lint-ignore no-explicit-any
   ): Promise<any | null>;
   compare(key: KrvKey, field: string, plain: unknown): Promise<boolean>;
+  backup(password: string): Promise<Uint8Array>;
+  restoreBackup(bytes: Uint8Array, password: string): Promise<void>;
 };
 
 /**

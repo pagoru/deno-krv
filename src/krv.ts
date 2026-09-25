@@ -27,7 +27,14 @@ import {
   DEFAULT_TRANSFORM_SECRETS,
   type KrvWithDefaultTransforms,
 } from "./transforms.ts";
-import { type KrvSecrets, loadSecrets } from "./secrets.ts";
+import {
+  decodeSecrets,
+  encodeSecrets,
+  type KrvSecrets,
+  loadSecrets,
+  secretsPath,
+} from "./secrets.ts";
+import { pack, snapshot, unpack } from "./backup.ts";
 
 /** Validators as seen by the types: base spec (from `V`) + function (from `F`). */
 type ValidatorMap<V, F> = {
@@ -239,14 +246,84 @@ export const openKRV = async <
     );
 
     const state: DatabaseState = { kv: await Deno.openKv(path) };
-    const db = createDatabase<Tables, Env<V, F, T>>(state, registry);
+    const prepareOptions = {
+      path,
+      validators,
+      migrations: options.migrations ?? [],
+      events: options.events ?? {},
+    };
+    const needsFile = (method: string) => {
+      if (!isFilePath(path)) {
+        throw new Error(`${method} needs a database file (a path)`);
+      }
+      return path;
+    };
+
+    const backup = async (password: string) => {
+      const file = needsFile("backup");
+      const { key, pepper } = secrets;
+      return await pack(
+        {
+          secrets: key && pepper ? { key, pepper } : null,
+          database: await snapshot(file),
+        },
+        password,
+      );
+    };
+
+    const restoreBackup = async (bytes: Uint8Array, password: string) => {
+      const file = needsFile("restoreBackup");
+      // Everything is checked before the database is touched.
+      const contents = await unpack(bytes, password);
+      const given = options.secrets;
+      if (
+        given &&
+        contents.secrets &&
+        (given.key !== contents.secrets.key ||
+          given.pepper !== contents.secrets.pepper)
+      ) {
+        throw new Error(
+          "The backup's secrets differ from the `secrets` passed to openKRV: " +
+            "open it with the backup's secrets",
+        );
+      }
+      const secretsFile =
+        !given && contents.secrets ? encodeSecrets(contents.secrets) : null;
+
+      const release = await acquireLock(
+        file,
+        options.lockTimeout ?? DEFAULT_LOCK_TIMEOUT,
+      );
+      try {
+        state.kv.close();
+        // A journal left from the old database would be applied to the new one.
+        for (const suffix of ["-wal", "-shm"]) {
+          await Deno.remove(file + suffix).catch(() => {});
+        }
+        await Deno.writeFile(`${file}.restoring`, contents.database);
+        await Deno.rename(`${file}.restoring`, file);
+        if (secretsFile) {
+          const target = secretsPath(file);
+          await Deno.writeFile(`${target}.restoring`, secretsFile, {
+            mode: 0o600,
+          });
+          await Deno.rename(`${target}.restoring`, target);
+          secrets = decodeSecrets(target, secretsFile);
+        }
+        state.kv = await Deno.openKv(file);
+        // An older backup gets the migrations it's missing, and is checked.
+        await prepare(state, registry, db as never, prepareOptions);
+      } finally {
+        await release();
+      }
+    };
+
+    const db = Object.assign(
+      createDatabase<Tables, Env<V, F, T>>(state, registry),
+      { backup, restoreBackup },
+    ) as KrvDatabase<Tables, Env<V, F, T>>;
     try {
-      await prepare(state, registry, db as never, {
-        path,
-        validators,
-        migrations: options.migrations ?? [],
-        events: options.events ?? {},
-      });
+      await prepare(state, registry, db as never, prepareOptions);
     } catch (error) {
       state.kv.close();
       throw error;

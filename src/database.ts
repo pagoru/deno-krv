@@ -96,7 +96,7 @@ export type DatabaseState = { kv: Deno.Kv };
 export const createDatabase = <Tables extends KrvTables, E>(
   state: DatabaseState,
   registry: Registry,
-): KrvDatabase<Tables, E> => {
+): Omit<KrvDatabase<Tables, E>, "backup" | "restoreBackup"> => {
   const validate = (table: ParsedTable, row: Row, skip: Set<string>) => {
     const issues = table.schema.checkExcept(row, table.name, skip);
     if (issues.length) throw new KrvValidationError(issues);

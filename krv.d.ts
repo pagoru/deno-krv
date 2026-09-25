@@ -683,6 +683,8 @@ export type KrvUntypedDb = {
     options?: Omit<KrvListOptions<any, any>, "limit">,
   ): Promise<any | null>;
   compare(key: KrvKey, field: string, plain: unknown): Promise<boolean>;
+  backup(password: string): Promise<Uint8Array>;
+  restoreBackup(bytes: Uint8Array, password: string): Promise<void>;
 };
 /**
  * The database inside a migration's `up`: `Db` (your database's type, or
@@ -1229,6 +1231,35 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
    * @returns How many soft deletes were purged.
    */
   purge: () => Promise<number>;
+  /**
+   * A backup of the database: one file with a consistent copy of the data
+   * and the secrets of the built-in transforms, compressed and encrypted
+   * with `password` (AES-256-GCM, key from PBKDF2). Taken while the database
+   * stays open. Store the bytes anywhere (S3, disk…).
+   *
+   * @throws Error without a database file (`":memory:"`, remote, default).
+   *
+   * @example
+   * ```ts
+   * const bytes = await db.backup(Deno.env.get("BACKUP_PASSWORD")!);
+   * await Deno.writeFile(`backups/${Date.now()}.krvb`, bytes);
+   * ```
+   */
+  backup: (password: string) => Promise<Uint8Array>;
+
+  /**
+   * Replaces the database's data and secrets with a backup from `backup`.
+   * The password is checked first: if it's wrong, nothing changes. Then the
+   * database is closed, the files are replaced and it's opened again, running
+   * the migrations the backup is missing.
+   *
+   * Operations in flight meanwhile may fail. Other processes with the same
+   * file open keep the old data until they reopen it.
+   *
+   * @throws Error on a wrong password or damaged bytes, without a database
+   *   file, or if `secrets` were passed to `openKRV` and the backup's differ.
+   */
+  restoreBackup: (bytes: Uint8Array, password: string) => Promise<void>;
   /**
    * Lists a table's rows, in key order.
    *
