@@ -139,7 +139,8 @@ type NodeSqlite = {
  */
 export const snapshot = async (path: string): Promise<Uint8Array> => {
   const sqlite = (await import(SQLITE)) as NodeSqlite;
-  const copy = `${path}.snapshot`;
+  // One per call: backups taken at the same time don't share it.
+  const copy = `${path}.snapshot-${crypto.randomUUID()}`;
   const source = new sqlite.DatabaseSync(path, { readOnly: true });
   try {
     await sqlite.backup(source, copy);

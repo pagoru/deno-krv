@@ -142,6 +142,8 @@ export type KrvEvents = {
   beforeMigrations?: (event: {
     pending: KrvLoadedMigration[];
     backupPath: string | null;
+    /** `db.backup`: the database as it is before the migrations, encrypted, as bytes. */
+    backup: (password: string) => Promise<Uint8Array>;
   }) => unknown;
   beforeMigration?: (event: { migration: KrvLoadedMigration }) => unknown;
   afterMigration?: (event: {

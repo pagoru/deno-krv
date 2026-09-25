@@ -156,3 +156,39 @@ Deno.test("backup: needs a database file and matching secrets", async () => {
   );
   given.close();
 });
+
+Deno.test("backup: beforeMigrations can take one", async () => {
+  const path = await tempPath();
+  const db = await open(path);
+  await db.insert(["members"], member);
+  db.close();
+
+  const seed: KrvMigration = {
+    url: "file:///migrations/2026-10-01--001--seed.ts",
+    up: async (db) => {
+      await db.insert(["members"], { ...member, name: "seeded" });
+    },
+  };
+  let bytes: Uint8Array | null = null;
+  const migrated = await openKRV({
+    path,
+    tables: [members],
+    migrations: [seed],
+    events: {
+      beforeMigrations: async ({ backup }) => {
+        bytes = await backup("pw");
+      },
+    },
+  });
+  assertEquals((await migrated.list(["members"])).length, 2);
+  migrated.close();
+
+  // Taken before the migration: restored where it doesn't run, it has one row.
+  const other = await open(await tempPath());
+  await other.restoreBackup(bytes!, "pw");
+  assertEquals(
+    (await other.list(["members"])).map((r) => r.name),
+    ["ana"],
+  );
+  other.close();
+});

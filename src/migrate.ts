@@ -497,7 +497,11 @@ export const prepare = async (
   let running: KrvLoadedMigration | null = null;
   try {
     if (pending.length) {
-      await events.beforeMigrations?.({ pending, backupPath: backupFile });
+      await events.beforeMigrations?.({
+        pending,
+        backupPath: backupFile,
+        backup: (password) => db.backup(password),
+      });
     }
     for (const migration of pending) {
       running = migration;
