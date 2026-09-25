@@ -42,8 +42,10 @@ await db.delete(note.key);
 - [Transforms](#transforms)
 - [Indexes](#indexes)
 - [Timestamps](#timestamps)
+- [Expiring rows](#expiring-rows)
 - [Relations](#relations)
 - [Expanding relations](#expanding-relations)
+- [Soft delete](#soft-delete)
 - [Updating](#updating)
 - [Reading: `where` and `filter`](#reading-where-and-filter)
 - [Migrations](#migrations)
@@ -404,6 +406,28 @@ Disable per table with `timestamps: false`.
 
 ---
 
+## Expiring rows
+
+`expireIn` (ms) on `insert`, `set` or `update` makes the row expire, and it's
+saved in the row as `expireAt`, a `Date.now()` timestamp like `createdAt`:
+
+```ts
+const s = await db.insert(["sessions"], { userId }, { expireIn: 3600_000 });
+s.value.expireAt; // 1790003600000
+
+await db.update(s.key, { lastSeen: Date.now() }); // still expires then
+await db.set(s.key, { ...s.value, userId: other }); // passed back: kept
+await db.insert(["sessions"], { userId, expireAt: Date.now() + 60_000 }); // same as expireIn
+await db.update(s.key, { expireAt: undefined }); // never expires
+```
+
+A `set` without `expireAt` (or `expireIn`) doesn't expire. Rows past their
+`expireAt` are left out of reads right away, before Deno KV removes them.
+Their index entries expire with them, and so does a row moved along with a
+reference. Every table has `expireAt`, so it can't be a field of yours.
+
+---
+
 ## Relations
 
 A `"{table.placeholder}"` field is a foreign key: it must exist, it's indexed,
@@ -498,6 +522,45 @@ await db.list(["authors"], {
 - Names can't clash with fields; wrong fields or tables are compile errors.
 - Forward expands are read in batches; reverse ones use the reference's index
   (one read per row). Expanded rows are separate reads, not a snapshot.
+
+---
+
+## Soft delete
+
+`soft` (ms) on `delete` hides the row instead, as if it had been deleted with
+`cascade: "unset"`, and deletes it for good once the time is up. Until then,
+`restore` brings it back:
+
+```ts
+await db.delete(["accounts", id], { soft: 30 * 24 * 3600_000 }); // 30 days
+
+await db.get(["accounts", id]); // value: null
+await db.get(["accounts", id], { deleted: true }); // the row, with deletedAt and expireAt
+await db.restore(["accounts", id]); // back as it was
+```
+
+While it's soft-deleted:
+
+- Rows with a **required** reference to it are soft-deleted with it,
+  recursively. Restoring any of them restores them all.
+- Rows with an **optional** reference aren't changed, but read as if it was
+  cleared: `undefined` for `"accountId?"`, `null` for
+  `["{accounts.accountId}", null]`. `where` on it doesn't match them, and
+  expands leave the soft-deleted rows out.
+- `deleted: true` on `get`, `list` or `find` (and their expands) shows
+  everything as stored.
+- Its unique values stay taken, so `restore` can't collide. Writing it, or a
+  new reference to it, throws.
+- Deleting it again without `soft` deletes it for good right away.
+
+When the time is up, Deno KV drops the rows and their index entries by
+itself (`expireAt`). `purge()` then clears the optional references to them for
+real, the way `cascade: "unset"` does. Call it from time to time, e.g. from
+`Deno.cron`:
+
+```ts
+Deno.cron("krv purge", "0 * * * *", () => db.purge()); // returns how many
+```
 
 ---
 
@@ -723,19 +786,21 @@ manages the data and no file is written, so pass `secrets`.
 
 ## API reference
 
-| Method                                                              | Description                                                                                                       |
-| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `openKRV({ path, tables, … })`                                      | Opens, migrates and checks. Options: `validators`, `transforms`, `migrations`, `events`, `secrets`, `lockTimeout` |
-| `table({ key, schema, … })`                                         | Optional: keeps a table's types when defined outside `openKRV`. Options: `indexes`, `timestamps`                  |
-| `get(key, { expand? })`                                             | One row, or `value: null`                                                                                         |
-| `insert(literals, value, { raw? })`                                 | New row; returns `{ key, value }`                                                                                 |
-| `update(key, patch \| (row) => patch, { check?, raw? })`            | Partial update, merged atomically; returns the row                                                                |
-| `set(key, value, { check?, raw? })`                                 | Create or replace; `check` a versionstamp for optimistic concurrency; `raw` fields are written as stored          |
-| `delete(key, { cascade? })`                                         | Delete; `cascade` deletes referencing rows, `"unset"` clears their optional references                            |
-| `list(literals, { where, filter, limit, reverse, values, expand })` | Rows: await for an array or `for await` to stream; `values: false` for entries                                    |
-| `find(literals, { where, filter, reverse, values, expand })`        | First matching row, or `null`                                                                                     |
-| `compare(key, field, plain)`                                        | Check a plain value against a transformed field                                                                   |
-| `close()`                                                           | Close the database                                                                                                |
+| Method                                                              | Description                                                                                                         |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `openKRV({ path, tables, … })`                                      | Opens, migrates and checks. Options: `validators`, `transforms`, `migrations`, `events`, `secrets`, `lockTimeout`   |
+| `table({ key, schema, … })`                                         | Optional: keeps a table's types when defined outside `openKRV`. Options: `indexes`, `timestamps`                    |
+| `get(key, { expand?, deleted? })`                                   | One row, or `value: null`; `deleted: true` includes soft-deleted rows                                               |
+| `insert(literals, value, { raw? })`                                 | New row; returns `{ key, value }`                                                                                   |
+| `update(key, patch \| (row) => patch, { check?, raw? })`            | Partial update, merged atomically; returns the row                                                                  |
+| `set(key, value, { check?, raw? })`                                 | Create or replace; `check` a versionstamp for optimistic concurrency; `raw` fields are written as stored            |
+| `delete(key, { cascade?, soft? })`                                  | Delete; `cascade` deletes referencing rows, `"unset"` clears their optional references; `soft` hides it for a while |
+| `restore(key)`                                                      | Bring back a soft-deleted row, with the rows soft-deleted with it                                                   |
+| `purge()`                                                           | Delete soft-deleted rows whose time is up for good, clearing references to them                                     |
+| `list(literals, { where, filter, limit, reverse, values, expand })` | Rows: await for an array or `for await` to stream; `values: false` for entries                                      |
+| `find(literals, { where, filter, reverse, values, expand })`        | First matching row, or `null`                                                                                       |
+| `compare(key, field, plain)`                                        | Check a plain value against a transformed field                                                                     |
+| `close()`                                                           | Close the database                                                                                                  |
 
 Also exported:
 
@@ -779,9 +844,9 @@ await db.set(
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | `KrvSchemaError`     | Invalid setup, stale rows or broken indexes (at open)                                                                           |
 | `KrvValidationError` | A value doesn't match the schema; `.issues` lists them                                                                          |
-| `KrvConflictError`   | A `check` failed, a key or unique value is taken                                                                                |
+| `KrvConflictError`   | A `check` failed, a key or unique value is taken, or a write to a soft-deleted row                                              |
 | `KrvReferenceError`  | A missing reference, or a delete without `cascade`                                                                              |
-| `KrvNotFoundError`   | `update` on a row that doesn't exist                                                                                            |
+| `KrvNotFoundError`   | `update` on a row that doesn't exist, or `restore` on one that isn't soft-deleted (anymore)                                     |
 | `Error`              | A built-in transform without secrets, a damaged `.secrets` file, or an `&` value that can't be decrypted (wrong key or altered) |
 
 ```
