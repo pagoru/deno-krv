@@ -371,7 +371,7 @@ type Searchable<K, T, Using> = [CharOf<K, T>] extends [never]
       ? true
       : false;
 
-/** `where` of a table: equality on plain values, nested objects match partially. */
+/** `where` of a table: equality on plain values, nested objects match partially, `undefined` matches a missing field. */
 export type KrvTableWhere<S, V, T, TS, Using = never> = Prettify<
   {
     -readonly [

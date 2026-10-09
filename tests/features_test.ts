@@ -781,6 +781,62 @@ Deno.test("where: nested objects match partially", async () => {
 });
 
 Deno.test(
+  "where: undefined matches rows without the field, not every row",
+  async () => {
+    const db = await open();
+    const a = await account(db, "a@x.dev");
+    const paid = await transaction(db, a.value.id, {
+      stripePaymentIntent: "pi_1",
+      meta: { source: "app", note: "x" },
+    });
+    const free = await transaction(db, a.value.id);
+
+    const withoutIntent = await db.list(["transactions"], {
+      where: { status: "succeeded", stripePaymentIntent: undefined },
+    });
+    assertEquals(
+      withoutIntent.map((t) => t.id),
+      [free.value.id],
+    );
+    // Also through an index on the other fields, and nested.
+    assertEquals(
+      (
+        await db.list(["transactions"], {
+          where: {
+            accountId: a.value.id,
+            status: "succeeded",
+            stripePaymentIntent: undefined,
+          },
+        })
+      ).map((t) => t.id),
+      [free.value.id],
+    );
+    assertEquals(
+      (
+        await db.list(["transactions"], {
+          where: { meta: { note: undefined } },
+        })
+      ).map((t) => t.id),
+      [free.value.id],
+    );
+    assertEquals(
+      (await db.find(["transactions"], { where: { meta: { note: "x" } } }))?.id,
+      paid.value.id,
+    );
+    // An optional field searched by a variable that's undefined.
+    const username: string | undefined = undefined;
+    await account(db, "b@x.dev", { username: "bob" });
+    assertEquals(
+      (await db.list(["accounts"], { where: { username } })).map(
+        (a) => a.username,
+      ),
+      [undefined],
+    );
+    db.close();
+  },
+);
+
+Deno.test(
   "filter: any condition, typed, after where and before limit",
   async () => {
     const db = await open();

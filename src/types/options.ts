@@ -72,8 +72,9 @@ export type KrvDeleteOptions = {
 
 export type KrvListOptions<Row, Where = { [K in keyof Row]?: Row[K] }> = {
   /**
-   * Equality on top-level fields; nested objects match partially. Values of
-   * transformed fields are transformed first, as if written. Key fields,
+   * Equality on top-level fields; nested objects match partially, and
+   * `undefined` matches rows without the field. Values of transformed fields
+   * are transformed first, as if written. Key fields,
    * references and indexes narrow what's read; other fields are compared
    * while scanning.
    */

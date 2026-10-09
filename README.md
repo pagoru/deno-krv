@@ -571,8 +571,9 @@ While it's soft-deleted:
   recursively. Restoring any of them restores them all.
 - Rows with an **optional** reference aren't changed, but read as if it was
   cleared: `undefined` for `"accountId?"`, `null` for
-  `["{accounts.accountId}", null]`. `where` on it doesn't match them, and
-  expands leave the soft-deleted rows out.
+  `["{accounts.accountId}", null]`. `where` on its id doesn't match them,
+  `where` on `undefined` / `null` does, and expands leave the soft-deleted
+  rows out.
 - `deleted: true` on `get`, `list` or `find` (and their expands) shows
   everything as stored.
 - Its unique values stay taken, so `restore` can't collide. Writing it, or a
@@ -648,6 +649,7 @@ await db.list(["books"]); // all, oldest first
 await db.list(["books"], { reverse: true, limit: 5 }); // 5 newest
 await db.list(["books"], { where: { genre: "fantasy" } }); // equality
 await db.list(["books"], { where: { meta: { lang: "en" } } }); // partial nested match
+await db.list(["books"], { where: { editorId: undefined } }); // rows without an editorId
 await db.list(["books"], {
   where: { authorId }, // narrows what's read
   filter: (b) => b.year < 1980, // any condition, typed
@@ -669,6 +671,12 @@ key, and the versionstamp for `check`) with `values: false`. `find` takes the sa
 `limit`) and returns the first match, or `null`. `where` uses the key, unique indexes,
 indexes and references when it can, otherwise it scans. `filter` runs after
 it, and `limit` counts what's left.
+
+`undefined` in `where` is a condition, not a skipped key: it matches rows
+without that field (at any depth), the same as reading them would give
+`undefined`. Empty values aren't indexed, so it's compared while scanning.
+A value that may be `undefined` by accident, like `where: { authorId }`,
+matches only the rows without one instead of every row.
 
 ---
 
