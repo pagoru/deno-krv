@@ -1340,11 +1340,12 @@ export const createDatabase = <Tables extends KrvTables, E>(
         string,
         { transform: KrvTransform; value: unknown }[]
       >();
+      // `undefined` matches rows without the field.
       for (const [field, value] of Object.entries(plainWhere)) {
-        if (value === undefined) continue;
         const t = table.transformed.find((t) => t.field === field);
         if (t && !t.transform.deterministic) loaded[field] = value;
         else stored[field] = await saveWhereValue(table, field, value);
+        if (value === undefined) continue;
         const transforms = new Set(
           table.indexes.flatMap((i) => i.using[field] ?? []),
         );
@@ -1394,18 +1395,27 @@ export const createDatabase = <Tables extends KrvTables, E>(
 
       const view = opts.deleted ? null : createUnsetView(opts.consistency);
       const references = new Set(table.references.map((r) => r.field));
+      // An empty reference also matches one to a soft-deleted row (read as
+      // unset), so it's only checked after the view.
+      const early = view
+        ? Object.fromEntries(
+            Object.entries(stored).filter(
+              ([f, v]) => !references.has(f) || (v !== undefined && v !== null),
+            ),
+          )
+        : stored;
       let count = 0;
       for await (const entry of plan(table, stored, plainWhere, opts)) {
         if (count >= limit) break;
         if (isHidden(entry.value, opts.deleted)) continue;
         // Re-check every condition: also guards against a stale index read.
-        if (!(await matchesAll(entry.value, stored))) continue;
+        if (!(await matchesAll(entry.value, early))) continue;
 
         const value = await loadRow(table, entry.value);
         if (!(await matchesAll(value, loaded))) continue;
         if (view) {
           await view(table, value);
-          // A reference to a soft-deleted row no longer matches.
+          // A reference to a soft-deleted row now reads as unset.
           if (
             !Object.entries(stored).every(
               ([f, v]) => !references.has(f) || matchesWhere(value[f], v),

@@ -195,6 +195,23 @@ Deno.test(
       1,
     );
 
+    // They read as unset, so `where` on an empty reference finds them.
+    assertEquals(
+      (await db.list(["codes"], { where: { accountId: undefined } })).length,
+      1,
+    );
+    assertEquals(
+      (await db.list(["gifts"], { where: { accountId: null } })).length,
+      1,
+    );
+    assertEquals(
+      await db.list(["codes"], {
+        where: { accountId: undefined },
+        deleted: true,
+      }),
+      [],
+    );
+
     // Expands: forward gives null, reverse leaves soft-deleted rows out.
     const expanded = await db.get(code.key, {
       expand: { account: "accountId" },

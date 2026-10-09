@@ -28,14 +28,16 @@ export const deepEqual = (a: unknown, b: unknown): boolean => {
   return false;
 };
 
-/** `where` semantics: nested plain objects match partially, the rest by value. */
+/**
+ * `where` semantics: nested plain objects match partially, the rest by value;
+ * `undefined` matches a missing value.
+ */
 export const matchesWhere = (value: unknown, where: unknown): boolean => {
   if (isPlainObject(where)) {
     return (
       isPlainObject(value) &&
-      Object.entries(where).every(
-        ([key, expected]) =>
-          expected === undefined || matchesWhere(value[key], expected),
+      Object.entries(where).every(([key, expected]) =>
+        matchesWhere(value[key], expected),
       )
     );
   }

@@ -103,8 +103,9 @@ export type KrvListOptions<
   },
 > = {
   /**
-   * Equality on top-level fields; nested objects match partially. Values of
-   * transformed fields are transformed first, as if written. Key fields,
+   * Equality on top-level fields; nested objects match partially, and
+   * `undefined` matches rows without the field. Values of transformed fields
+   * are transformed first, as if written. Key fields,
    * references and indexes narrow what's read; other fields are compared
    * while scanning.
    */
@@ -481,7 +482,7 @@ type Searchable<K, T, Using> = [CharOf<K, T>] extends [never]
     : KrvTopFieldName<K, T> extends Using
       ? true
       : false;
-/** `where` of a table: equality on plain values, nested objects match partially. */
+/** `where` of a table: equality on plain values, nested objects match partially, `undefined` matches a missing field. */
 export type KrvTableWhere<S, V, T, TS, Using = never> = Prettify<
   {
     -readonly [
@@ -1271,7 +1272,7 @@ export interface KrvDatabase<in out Tables extends KrvTables, in out E> {
    * @param literals The table's literal key parts, as for `insert`.
    * @param options
    *   - `where`: equality on top-level fields; nested objects match
-   *     partially. Transformed fields are compared by their saved value (only
+   *     partially, and `undefined` matches rows without the field. Transformed fields are compared by their saved value (only
    *     deterministic transforms). Key fields, unique and secondary indexes
    *     and references narrow what's read; other fields are compared while
    *     scanning.
